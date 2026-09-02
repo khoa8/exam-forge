@@ -38,6 +38,11 @@ export function scanForInjection(text: string): InjectionScan {
   return { detected: matches.length > 0, matches };
 }
 
+/** Sentence-level check used by extraction to avoid quoting instruction-like text. */
+export function looksLikeInstruction(text: string): boolean {
+  return INJECTION_PATTERNS.some((re) => re.test(text));
+}
+
 export function injectionNotice(): string {
   return "Note: the material contains text that looks like instructions to an AI assistant. ExamForge treats study material strictly as data, so those instructions were ignored.";
 }

@@ -1,5 +1,6 @@
 import type { Concept, McqOption, Question } from "./types";
 import { contentWords, lightStem, normText, randomId, seededRandom, wordSimilarity } from "./util";
+import { looksLikeInstruction } from "./provider/sanitize";
 
 /**
  * Deterministic, key-free question generation from source text and extracted concepts.
@@ -31,6 +32,7 @@ function findDefinitionSentence(text: string, concept: Concept): DefinitionInfo 
   const normNameNoArticle = normName.replace(/^(the|a|an)\s+/, "");
 
   for (const sentence of sentences) {
+    if (looksLikeInstruction(sentence)) continue;
     const n = normText(sentence);
     if (!(n.includes(normName) || n.includes(normNameNoArticle))) continue;
     const m =
@@ -60,6 +62,7 @@ function keySentenceFor(text: string, concept: Concept): string | null {
     .map((s) => s.trim())
     .filter((s) => s.length >= 12);
   for (const sentence of sentences) {
+    if (looksLikeInstruction(sentence)) continue;
     const n = normText(sentence);
     if (n.includes(normName) || n.includes(normNameNoArticle)) return sentence;
   }
@@ -254,11 +257,11 @@ export function generateQuestions(text: string, concepts: Concept[], seed: strin
       .filter((c) => c.id !== concept.id && defs.get(c.id))
       .map((c) => ({ concept: c, def: defs.get(c.id)! }));
 
-    const mcq = def ? buildMcq(concept, def, otherDefs, `${seed}:${concept.id}:mcq`) : null;
+    const mcq = def ? buildMcq(concept, def, otherDefs, `${seed}:${concept.name}:mcq`) : null;
     if (mcq) questions.push(mcq);
     else drop(def ? "MCQ dropped: not enough distinct definition distractors" : "MCQ skipped: no definition sentence");
 
-    const tf = buildTrueFalse(concept, def, otherDefs, keySentences.get(concept.id) ?? null, `${seed}:${concept.id}:tf`);
+    const tf = buildTrueFalse(concept, def, otherDefs, keySentences.get(concept.id) ?? null, `${seed}:${concept.name}:tf`);
     if (tf) questions.push(tf);
     else drop("True/false skipped: no grounded key sentence");
 

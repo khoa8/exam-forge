@@ -1,5 +1,6 @@
 import type { Concept, Evidence, ExtractionQuality } from "./types";
 import { contentWords, normText, randomId, wordSimilarity, stripArticle, capitalize } from "./util";
+import { looksLikeInstruction } from "./provider/sanitize";
 
 /**
  * Deterministic, key-free concept extraction from study text.
@@ -101,7 +102,17 @@ function extractDefinitionSubject(sentence: string): string | null {
   const words = subj.split(/\s+/);
   if (words.length > 6) return null;
   const first = words[0].toLowerCase();
-  if (["this", "that", "these", "those", "it", "there", "they", "we", "he", "she", "which", "such", "here"].includes(first)) return null;
+  if (
+    [
+      "this", "that", "these", "those", "it", "there", "they", "we", "he", "she", "which", "such", "here",
+      // Second-person / imperative / meta words: never study-content subjects.
+      "you", "your", "yours", "i", "me", "my", "please", "let", "must", "should", "never", "always",
+      "ignore", "disregard", "forget", "remember", "note", "also", "just", "simply", "now", "then",
+      "do", "don", "dont", "did", "first", "next", "finally", "however", "instead",
+    ].includes(first)
+  ) {
+    return null;
+  }
   if (/^(in|on|at|to|for|from|by|with|as|of|if|when|while|because|and|or|but|so|also|however|additionally|moreover|therefore|for example|in addition|in contrast)$/i.test(first)) return null;
   return subj;
 }
@@ -180,6 +191,8 @@ export function extractConcepts(text: string, maxConcepts = 10): ExtractionResul
 
     const sentences = splitSentences(section.body);
     for (const { sentence, offset } of sentences) {
+      // Untrusted material: never use instruction-like sentences as concept sources.
+      if (looksLikeInstruction(sentence)) continue;
       const subj = extractDefinitionSubject(sentence);
       if (subj) {
         addCandidate(candidates, subj, 3.5, bodyOffset + offset, heading, sentence);
@@ -265,7 +278,7 @@ function firstMentionSentence(text: string, name: string): string | null {
   const sentences = splitSentences(text);
   const normName = normText(name);
   for (const { sentence } of sentences) {
-    if (normText(sentence).includes(normName)) return sentence;
+    if (!looksLikeInstruction(sentence) && normText(sentence).includes(normName)) return sentence;
   }
   return null;
 }
