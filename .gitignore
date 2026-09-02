@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.next/
+out/
+
+# local data (user study material + progress — never commit)
+.data/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# testing
+test-results/
+playwright-report/
+coverage/
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+
+# screenshots kept in repo: docs/screenshots are tracked intentionally
