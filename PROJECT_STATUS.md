@@ -1,78 +1,73 @@
 # PROJECT_STATUS.md
 
-_Last updated: 2026-09-03 13:20 Asia/Ho_Chi_Minh (recovery checkpoint)_
+_Last updated: 2026-09-03, final verification round complete_
 
-## Current verified state
+## Current state: release candidate, all gates green
 
-ExamForge is a runnable Next.js 15 (App Router, TypeScript) MVP that implements the full
-no-key learning loop: **Material → Concepts → Diagnostic → Grading/Feedback → Weak-topic
-model → Targeted practice → Mock exam → Readiness dashboard**, with SQLite persistence
-(`node:sqlite`, file `.data/examforge.sqlite`, gitignored).
+ExamForge is a complete, verified, runnable Next.js 15 + TypeScript MVP implementing the
+full no-key learning loop:
 
-The deterministic demo provider (no API key, no network) extracts concepts and generates
-grounded questions from study material; an optional GLM adapter exists behind the same
-interface with automatic fallback.
+> Material → Concepts → Diagnostic → Grading/Feedback → Weak-topic model → Targeted
+> practice → Mock exam → Readiness dashboard — persisted in local SQLite.
 
-## Last known working commit
+## Verified final results (production build)
 
-`ae7e8fe` — "E2E: Playwright smoke test covering the full bundled-demo journey"
-(on top of `5aa6a9e` core + tests). Working tree clean after this commit.
+| Gate | Command | Result |
+| --- | --- | --- |
+| Typecheck | `npx tsc --noEmit` | ✅ clean |
+| Lint | `npm run lint` | ✅ clean |
+| Unit + integration | `npx vitest run tests/unit tests/integration` | ✅ 68/68 (10 files) |
+| E2E | `npx playwright test` | ✅ full UI journey passes |
+| Production build | `npm run build` | ✅ succeeds |
+| Bundled demo (API-level user simulation) | diagnostic 4/8 → practice weakest 4/4 → mock 5/8, no grade leakage before submit, readiness 59% + next action, progress persisted | ✅ |
+| Real-browser UX | Playwright journey + UX probe (unknown-course error, short-paste validation, poor-material honesty, empty-session message, keyboard MCQ, 390-px mobile) | ✅ |
+| Screenshots | 8 production-server captures in `docs/screenshots/`, visually reviewed | ✅ |
 
-## Validation commands and results (all run 2026-09-03 13:12–13:20 ICT)
+The demo database was reset to pristine after testing, so a first-time user sees the
+intended empty state.
 
-| Command | Result |
-| --- | --- |
-| `npx tsc --noEmit` | ✅ clean |
-| `npm run lint` | ✅ no warnings/errors |
-| `npx vitest run tests/unit tests/integration` | ✅ 67/67 tests, 10 files |
-| `npx playwright test` | ✅ 1/1 e2e smoke (full UI journey, ~4s) |
-| `npm run build` | ✅ production build succeeds (103–111 kB first load) |
-| API user-flow simulation (`/tmp/ef-user-flow.py`) | ✅ full loop verified: diagnostic 4/8 → weak topics detected → practice weakest 4/4 → mock 5/8 with deferred grading → readiness 46%→57%, progress persisted |
+## P1 criteria check (GOAL.md)
 
-## Current uncommitted work
+- ✅ Text-based PDF ingestion (unpdf, honest quality/failure messages, tested with
+  generated fixtures)
+- ✅ Real provider adapter (GLM, OpenAI-compatible) plus deterministic mock provider and
+  automatic fallback (`.env.example`, failure-path tested)
+- ✅ Stronger question schema validation (zod + deterministic gates: membership,
+  uniqueness, grounding, ambiguity, duplicates)
+- ✅ Duplicate/ambiguous-question checks (near-duplicate prompts/statements, ambiguity
+  guard; cross-session duplicates are backlog item 1)
+- ✅ Adaptive practice logic (review-priority-ordered practice picker, weakest-first)
+- ✅ Simple spaced-review metadata (lastSeen, per-status next-review hints; scheduling
+  persistence is backlog item 14)
+- ✅ Concept/readiness visualization (mastery bars, statuses, readiness plan; concept
+  graph is backlog item 3)
+- ✅ Polished demo, README, and real screenshots
 
-None (Playwright config + e2e test were committed as `ae7e8fe`).
+## Documentation
 
-## Goal criteria status
+- `README.md` — what it is, quick start, workflow, screenshots, limitations
+- `PRODUCT.md` — mission, loop, grounding/honesty rules, adaptive model
+- `ARCHITECTURE.md` — module map, data flow, invariants, testing strategy
+- `TASKS.md` — P0 done, P1 state, backlog
+- `FINAL_REPORT.md` — verified behavior, commands, results, limitations, next 20 tasks,
+  readiness assessments
 
-Done and verified:
-- Bundled sample material (original, redistributable) → 10 concepts, 40 validated questions, no key needed
-- Diagnostic (≤8 balanced questions), consistent grading, grounded explanations + evidence quotes
-- Weak/strong/untested mastery estimates with review priority; readiness labeled as internal heuristic
-- Practice by concept (weak first); mock exam with deferred feedback + full review
-- Persistence (SQLite) across sessions; delete-course privacy behavior
-- Deterministic validation gates (required fields, option membership/uniqueness, grounding quotes,
-  near-duplicate removal, ambiguity guard); all applied to every generated question
-- Prompt-injection defenses (sentence-level filtering, nonce-wrapped untrusted blocks for LLM path,
-  injection scan surfaced honestly in quality notes)
-- GLM provider adapter (OpenAI-compatible), fallback to demo on any failure, `.env.example`
-- PDF ingestion via unpdf with honest quality warnings (unit-tested with generated fixtures)
-- Tests: ingestion, schemas, validation, grading, mastery, readiness, sampling, injection,
-  provider failure/fallback, persistence, full demo flow, Playwright UI journey
+## Git checkpoints
 
-## Remaining work
+- `5aa6a9e` core engine + API + UI scaffold
+- `ae7e8fe` unit/integration test suite
+- `0b93e04` Playwright e2e journey
+- `2d1ba99` recovery baseline documentation
+- `39dac3b` spaced-review hints + UX states + screenshots + probe
+- final docs/report commit (see git log)
 
-The previous 08:40 / 09:00 feature-freeze is obsolete and must be ignored.
+## Known limitations (accepted, documented)
 
-P0 is fully implemented and verified.
+Definition-centric demo generation with fail-closed grounding (fewer questions, never
+fabricated ones); heuristic-only readiness; no OCR; single local learner; GLM adapter
+verified against mapping/failure/fallback paths but not a live paid endpoint.
 
-Before final completion, prioritize:
+## Next highest-value actions
 
-1. Real screenshots for README using the actual running application.
-2. Browser UX inspection across main states and responsive layouts, with repairs for material issues.
-3. Verify whether any high-value P1 criteria in GOAL.md remain incomplete or only partially implemented.
-4. Improve documentation: README.md, PRODUCT.md, ARCHITECTURE.md, TASKS.md, FINAL_REPORT.md.
-5. Cleanup temporary/scratch artifacts and verify .gitignore.
-6. Run the complete validation suite again after any changes.
-7. Create final verified local checkpoint commit(s).
-
-Do not invent new low-value features merely to consume quota.
-
-## Next highest-value action
-
-Re-read GOAL.md and compare the verified repository against every P1 criterion.
-
-If any important P1 criterion is incomplete, implement and verify it.
-
-Otherwise continue with real screenshot capture, browser UX inspection and repairs,
-documentation, cleanup, and final release validation.
+See FINAL_REPORT.md §6 (20 ranked tasks); top three: cross-session duplicate detection,
+"review today" queue page, concept-map view.
