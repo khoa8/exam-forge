@@ -113,6 +113,13 @@ export default function ReadinessPage() {
                 </span>
               </div>
               <MasteryBar mastery={m.mastery} status={m.status} confidence={m.confidence} />
+              {m.nextReviewInDays !== null && (
+                <p className="text-xs text-slate-500">
+                  {m.nextReviewInDays === 0
+                    ? "Recommended review: today"
+                    : `Recommended next review: in ${m.nextReviewInDays} day${m.nextReviewInDays === 1 ? "" : "s"}`}
+                </p>
+              )}
             </div>
           ))}
         </div>

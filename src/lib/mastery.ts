@@ -12,6 +12,24 @@ import { clamp01 } from "./util";
 
 const RECENT_WINDOW = 5;
 
+/**
+ * Simple spaced-review recommendation (days until the next review).
+ * Weak topics: today. Developing: ~2 days. Strong: ~1 week. Untested: n/a.
+ * Deliberately simple — not an Anki-style scheduler.
+ */
+export function nextReviewInDays(status: MasteryState["status"]): number | null {
+  switch (status) {
+    case "weak":
+      return 0;
+    case "developing":
+      return 2;
+    case "strong":
+      return 7;
+    default:
+      return null;
+  }
+}
+
 export interface AttemptRecord {
   conceptId: string;
   score: number; // 0..1
@@ -39,6 +57,7 @@ export function computeMastery(
       recentCorrect: 0,
       lastSeen: null,
       reviewPriority: conceptImportance * 0.5,
+      nextReviewInDays: null,
     };
   }
 
@@ -86,5 +105,6 @@ export function computeMastery(
     recentCorrect,
     lastSeen,
     reviewPriority,
+    nextReviewInDays: nextReviewInDays(status),
   };
 }
