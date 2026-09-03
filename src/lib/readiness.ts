@@ -32,6 +32,7 @@ export function computeReadiness(
     recentCorrect: 0,
     lastSeen: null,
     reviewPriority: c.importance * 0.5,
+    nextReviewInDays: null,
   });
 
   const totalImportance = concepts.reduce((s, c) => s + Math.max(0.1, c.importance), 0) || 1;

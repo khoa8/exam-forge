@@ -50,14 +50,29 @@ Done and verified:
 - Tests: ingestion, schemas, validation, grading, mastery, readiness, sampling, injection,
   provider failure/fallback, persistence, full demo flow, Playwright UI journey
 
-Remaining (finalization phase — feature freeze at 08:40 ICT has passed):
-1. Real screenshots for README (Playwright capture)
-2. Browser UX inspection pass (responsive, empty/loading/error states) + repairs
-3. Documentation: README.md, PRODUCT.md, ARCHITECTURE.md, TASKS.md, FINAL_REPORT.md
-4. Cleanup: scratch test file, test-results dir, .gitignore check
-5. Final commit(s)
+## Remaining work
+
+The previous 08:40 / 09:00 feature-freeze is obsolete and must be ignored.
+
+P0 is fully implemented and verified.
+
+Before final completion, prioritize:
+
+1. Real screenshots for README using the actual running application.
+2. Browser UX inspection across main states and responsive layouts, with repairs for material issues.
+3. Verify whether any high-value P1 criteria in GOAL.md remain incomplete or only partially implemented.
+4. Improve documentation: README.md, PRODUCT.md, ARCHITECTURE.md, TASKS.md, FINAL_REPORT.md.
+5. Cleanup temporary/scratch artifacts and verify .gitignore.
+6. Run the complete validation suite again after any changes.
+7. Create final verified local checkpoint commit(s).
+
+Do not invent new low-value features merely to consume quota.
 
 ## Next highest-value action
 
-Capture real UI screenshots via Playwright, inspect them, fix any material UX issues,
-then write documentation and FINAL_REPORT.md.
+Re-read GOAL.md and compare the verified repository against every P1 criterion.
+
+If any important P1 criterion is incomplete, implement and verify it.
+
+Otherwise continue with real screenshot capture, browser UX inspection and repairs,
+documentation, cleanup, and final release validation.

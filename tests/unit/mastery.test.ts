@@ -91,6 +91,19 @@ describe("mastery update rules", () => {
     const stale = computeMastery("c1", [{ conceptId: "c1", score: 1, createdAt: daysAgo(6) }], concept.importance, NOW);
     expect(stale.reviewPriority).toBeGreaterThan(fresh.reviewPriority);
   });
+
+  it("recommends spaced review timing by status", () => {
+    const weak = computeMastery("c1", [{ conceptId: "c1", score: 0, createdAt: daysAgo(1) }], 0.5, NOW);
+    const strong = computeMastery(
+      "c2",
+      [1, 2, 3].map((d) => ({ conceptId: "c2", score: 1, createdAt: daysAgo(d) })),
+      0.5,
+      NOW,
+    );
+    expect(weak.nextReviewInDays).toBe(0);
+    expect(strong.nextReviewInDays).toBe(7);
+    expect(computeMastery("c3", [], 0.5, NOW).nextReviewInDays).toBeNull();
+  });
 });
 
 describe("readiness aggregation", () => {

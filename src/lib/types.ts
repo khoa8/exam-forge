@@ -148,6 +148,8 @@ export interface MasteryState {
   lastSeen: string | null;
   /** 0..1 higher = review sooner. */
   reviewPriority: number;
+  /** Simple spaced-review hint, in days from now (null = nothing scheduled). */
+  nextReviewInDays: number | null;
 }
 
 export interface ReadinessReport {

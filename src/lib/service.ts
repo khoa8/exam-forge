@@ -219,13 +219,21 @@ export function startSession(courseId: string, kind: SessionKind, conceptId?: st
     const target = conceptId ?? weakestConceptId(courseId, concepts);
     if (!concepts.some((c) => c.id === target)) throw new NotFoundError("Concept");
     picked = samplePractice(questions, target, courseId);
-    if (picked.length === 0) throw new ConflictError("No practice questions available for this concept.");
+    if (picked.length === 0) {
+      throw new ConflictError(
+        "No practice questions are available for this concept. The material may not contain enough grounded content about it.",
+      );
+    }
   } else if (kind === "diagnostic") {
     picked = sampleDiagnostic(questions, concepts, courseId);
   } else {
     picked = sampleMock(questions, concepts, courseId);
   }
-  if (picked.length === 0) throw new ConflictError("No questions available for this session.");
+  if (picked.length === 0) {
+    throw new ConflictError(
+      "No questions could be generated for this material. It is probably too short or unstructured — try material with headings and clear definitions (for example 'X is …').",
+    );
+  }
 
   const session: Session = {
     id: randomId("ses_"),
