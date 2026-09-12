@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { AnswerValue, ClientQuestion, GradeResult } from "@/lib/types";
 import type { SessionView } from "@/lib/service";
@@ -25,6 +25,8 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const [feedback, setFeedback] = useState<GradeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const skipInitialFocus = useRef(true);
 
   const questions = view.questions;
   const finished = view.session.status === "completed";
@@ -36,6 +38,15 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const currentSaved = current ? Boolean(view.givenAnswers[current.id]) : false;
   const currentRevealed = current && !isMock ? view.revealed[current.id] : undefined;
   const effectiveFeedback = feedback ?? currentRevealed ?? null;
+
+  // Keep keyboard/screen-reader context on the question card after navigation.
+  useEffect(() => {
+    if (skipInitialFocus.current) {
+      skipInitialFocus.current = false;
+      return;
+    }
+    cardRef.current?.focus();
+  }, [index]);
 
   async function saveAnswer() {
     if (!current || !draft || busy || currentSaved) return;
@@ -113,7 +124,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
       </div>
 
       {current && (
-        <div className="bg-white border rounded-xl p-5 sm:p-6 space-y-5">
+        <div ref={cardRef} tabIndex={-1} className="bg-white border rounded-xl p-5 sm:p-6 space-y-5 focus:outline-hidden focus-visible:outline-2 focus-visible:outline-indigo-600">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <span className="bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-wide font-medium">{current.type}</span>
             <span>Topic: {current.conceptName}</span>
@@ -134,9 +145,15 @@ export function SessionRunner({ initialView, courseId }: Props) {
           />
 
           {currentSaved && (
-            <p className="text-xs text-slate-500">Answer saved — first answers count, so this question is locked.</p>
+            <p className="text-xs text-slate-500" role="status">
+              Answer saved — first answers count, so this question is locked.
+            </p>
           )}
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && (
+            <p className="text-sm text-red-600" role="alert">
+              {error}
+            </p>
+          )}
 
           {effectiveFeedback && !isMock && <FeedbackPanel result={effectiveFeedback} />}
 
@@ -195,11 +212,12 @@ export function SessionRunner({ initialView, courseId }: Props) {
       )}
 
       {/* Question navigator */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Question navigator">
         {questions.map((q, i) => (
           <button
             key={q.id}
             onClick={() => goTo(i)}
+            aria-current={i === index ? "step" : undefined}
             className={
               "w-9 h-9 rounded-lg text-sm font-medium border " +
               (i === index
@@ -292,12 +310,14 @@ function AnswerInput({
   }
   if (question.type === "truefalse") {
     return (
-      <div className="flex gap-3">
+      <div className="flex gap-3" role="radiogroup" aria-label="True or false">
         {[true, false].map((v) => {
           const selected = value?.type === "boolean" && value.value === v;
           return (
             <button
               key={String(v)}
+              role="radio"
+              aria-checked={selected}
               disabled={disabled}
               onClick={() => onChange({ type: "boolean", value: v })}
               className={
@@ -320,6 +340,7 @@ function AnswerInput({
         value={value?.type === "text" ? value.text : ""}
         onChange={(e) => onChange({ type: "text", text: e.target.value })}
         placeholder="Type the term…"
+        aria-label="Your answer"
         className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
       />
     );
@@ -331,6 +352,7 @@ function AnswerInput({
       value={value?.type === "text" ? value.text : ""}
       onChange={(e) => onChange({ type: "text", text: e.target.value })}
       placeholder="Write your explanation in your own words…"
+      aria-label="Your explanation"
       className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
     />
   );
@@ -339,6 +361,7 @@ function AnswerInput({
 export function FeedbackPanel({ result }: { result: GradeResult }) {
   return (
     <div
+      role="status"
       className={
         "rounded-lg border p-4 space-y-2 " +
         (result.correct ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50")

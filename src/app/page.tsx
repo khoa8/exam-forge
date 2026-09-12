@@ -21,6 +21,7 @@ export default function HomePage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadCourses = useCallback(async () => {
@@ -84,6 +85,7 @@ export default function HomePage() {
   async function deleteCourse(id: string) {
     setBusy("delete-" + id);
     await fetch(`/api/courses/${id}`, { method: "DELETE" });
+    setConfirmDeleteId(null);
     setNotice("Course deleted, including its material and progress.");
     setBusy(null);
     void loadCourses();
@@ -122,12 +124,14 @@ export default function HomePage() {
             value={pasteTitle}
             onChange={(e) => setPasteTitle(e.target.value)}
             placeholder="Title (optional)"
+            aria-label="Course title (optional)"
             className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
           />
           <textarea
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
             placeholder="Paste lecture notes or Markdown. Headings and definitions like “X is …” produce the best questions."
+            aria-label="Study material"
             rows={4}
             className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
           />
@@ -147,6 +151,7 @@ export default function HomePage() {
             ref={fileRef}
             type="file"
             accept="application/pdf"
+            aria-label="PDF file to upload"
             className="w-full text-sm file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-slate-100 file:font-medium"
           />
           <button
@@ -165,7 +170,9 @@ export default function HomePage() {
         </p>
       )}
       {notice && (
-        <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg px-4 py-3">{notice}</p>
+        <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg px-4 py-3" role="status">
+          {notice}
+        </p>
       )}
 
       <p className="text-xs text-slate-500 max-w-3xl mx-auto text-center">
@@ -201,13 +208,33 @@ export default function HomePage() {
                 >
                   Open
                 </Link>
-                <button
-                  onClick={() => void deleteCourse(c.id)}
-                  disabled={busy !== null}
-                  className="px-3 py-1.5 rounded-lg border text-sm hover:bg-slate-50 disabled:opacity-40"
-                >
-                  Delete
-                </button>
+                {confirmDeleteId === c.id ? (
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs text-slate-600">Delete this course and all its progress?</span>
+                    <button
+                      onClick={() => void deleteCourse(c.id)}
+                      disabled={busy !== null}
+                      className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-40"
+                    >
+                      {busy === "delete-" + c.id ? "Deleting…" : "Yes, delete"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteId(null)}
+                      disabled={busy !== null}
+                      className="px-3 py-1.5 rounded-lg border text-sm hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDeleteId(c.id)}
+                    disabled={busy !== null}
+                    className="px-3 py-1.5 rounded-lg border text-sm hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    Delete
+                  </button>
+                )}
               </li>
             ))}
           </ul>
