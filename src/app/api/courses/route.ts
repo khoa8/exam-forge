@@ -47,7 +47,13 @@ export async function POST(req: NextRequest) {
       sourceType = "pdf";
       if (!title) title = file.name.replace(/\.pdf$/i, "");
     } else {
-      const body = (await req.json()) as { sample?: boolean; text?: string; title?: string };
+      // Request parsing boundary: malformed client JSON is a 4xx, not a server error.
+      let body: { sample?: boolean; text?: string; title?: string };
+      try {
+        body = (await req.json()) as { sample?: boolean; text?: string; title?: string };
+      } catch {
+        return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+      }
       if (body.sample) {
         text = SAMPLE_MATERIAL;
         sourceType = "bundled";

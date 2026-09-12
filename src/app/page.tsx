@@ -84,11 +84,21 @@ export default function HomePage() {
 
   async function deleteCourse(id: string) {
     setBusy("delete-" + id);
-    await fetch(`/api/courses/${id}`, { method: "DELETE" });
-    setConfirmDeleteId(null);
-    setNotice("Course deleted, including its material and progress.");
-    setBusy(null);
-    void loadCourses();
+    setError(null);
+    try {
+      const res = await fetch(`/api/courses/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to delete the course. Please try again.");
+      }
+      setConfirmDeleteId(null);
+      setNotice("Course deleted, including its material and progress.");
+      void loadCourses();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (

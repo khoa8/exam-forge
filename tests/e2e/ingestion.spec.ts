@@ -115,3 +115,36 @@ test("course deletion is deliberate and cancellable", async ({ page }) => {
   await expect(page.getByRole("status")).toContainText(/Course deleted/i);
   await expect(page.getByRole("link", { name: "Deletion Probe" })).toHaveCount(0);
 });
+
+test("failed DELETE shows an honest error, never a success notice", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Study material").fill(GOOD_TEXT);
+  await page.getByLabel("Course title (optional)").fill("Failed Delete Probe");
+  await page.getByRole("button", { name: "Create course" }).click();
+  await page.waitForURL(/\/course\/crs_/);
+  await page.goto("/");
+  const item = page.locator("li", { has: page.getByRole("link", { name: "Failed Delete Probe" }) }).first();
+
+  // Make the DELETE endpoint fail at the network boundary.
+  await page.route("**/api/courses/*", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Simulated delete failure" }) });
+      return;
+    }
+    await route.continue();
+  });
+
+  await item.getByRole("button", { name: "Delete", exact: true }).click();
+  await item.getByRole("button", { name: /Yes, delete/i }).click();
+
+  const alert = page.getByRole("alert").filter({ hasText: /Simulated delete failure/ });
+  await expect(alert).toBeVisible();
+  await expect(page.getByRole("status")).toHaveCount(0);
+  // The course remains listed because deletion did not happen.
+  await expect(item).toBeVisible();
+
+  // The UI remains usable: confirming again with the interception removed succeeds.
+  await page.unroute("**/api/courses/*");
+  await item.getByRole("button", { name: /Yes, delete/i }).click();
+  await expect(page.getByRole("status")).toContainText(/Course deleted/i);
+});
