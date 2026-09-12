@@ -69,12 +69,26 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
 3. **Mock exams hide correctness until submission** — the API returns `grade: null`
    during mock sessions (tested).
 4. **Every generated question passes deterministic validation** — schema membership,
-   exactly-one-correct-option, option-id uniqueness, evidence-quote grounding against the
-   source, near-duplicate prompts, and an ambiguity guard (correct answer ≈ distractor).
-5. **Injection-filtered extraction** — sentences matching instruction patterns never
+   exactly-one-correct-option, option-id uniqueness, near-duplicate prompts, and an
+   ambiguity guard (correct answer ≈ distractor).
+5. **Exact grounding and answer provenance (deterministic, fail-closed)** —
+   `extract.ts::quoteIsGrounded` accepts an evidence quote only when its normalized form
+   is a contiguous substring of the normalized source; there is no prefix/partial
+   fallback, so a real prefix can never legitimize a fabricated suffix. Additionally,
+   every answer-bearing field must be proven from the source: MCQ correct option text
+   (`isSourceSpan` containment), true/false statements keyed true (verbatim span; a
+   statement keyed false must NOT be verbatim, otherwise the key contradicts the
+   material), short accepted/model answers (source spans), explanation model answers
+   (source span) and key terms (derivable from source words by normalized containment or
+   stemming), and learner-facing explanations (must quote a grounded evidence quote).
+   The GLM adapter constructs explanations deterministically from the validated evidence
+   quote and never passes model-written explanation prose to the learner. Unsupported
+   candidates are dropped, never repaired; if fewer than 3 questions survive a provider
+   falls back or fails per the provider-mode contract (tested).
+6. **Injection-filtered extraction** — sentences matching instruction patterns never
    become concepts or evidence quotes (tested with an injected fixture).
-6. **Provider independence** — the GLM adapter can fail arbitrarily; the registry falls
-   back to the demo provider with a visible notice (tested).
+7. **Provider independence** — the GLM adapter can fail arbitrarily; the registry falls
+   back to the demo provider with a visible notice when the mode allows fallback (tested).
 
 ## Persistence
 
@@ -86,9 +100,14 @@ derived data). WAL mode for concurrent dev-server reads.
 ## Provider abstraction
 
 `MaterialProvider.generate(text, sourceType) → ProviderOutput`. Selection order:
-`EXAMFORGE_PROVIDER=glm|demo|auto` (auto = GLM if a key exists, else demo). GLM output is
-parsed from a JSON block, remapped, validated with the same gates as demo output, and
-rejected (→ fallback) if fewer than 3 grounded concepts/questions survive.
+`EXAMFORGE_PROVIDER=glm|demo|auto` (auto = GLM if a key exists, else demo). Forced `glm`
+is an explicit contract: when GLM is unavailable or its output is rejected, the request
+fails loudly instead of silently substituting demo content; `auto` treats GLM as
+best-effort and falls back to the demo provider with a visible notice. GLM output is
+parsed from a JSON block, remapped (concepts, answers and explanations provenance-checked
+per the key invariants above), validated with the same gates as demo output, and rejected
+(→ fallback in `auto`, error in forced `glm`) if fewer than 3 grounded concepts/questions
+survive.
 
 ## Testing strategy
 

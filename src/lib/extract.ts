@@ -293,19 +293,28 @@ export function buildEvidence(text: string, sentence: string, section?: string, 
   return [ev];
 }
 
-/** Verify that an evidence quote is actually present in the source (grounding audit). */
+/**
+ * Grounding audit for evidence quotes: a quote is grounded only when its
+ * normalized form is a contiguous substring of the normalized source. There is
+ * deliberately no prefix fallback — a real prefix must never legitimize a
+ * fabricated suffix. Formatting tolerance comes from normalization only.
+ */
 export function quoteIsGrounded(text: string, quote: string): boolean {
-  const normSource = normText(text);
   const normQuote = normText(quote);
   if (normQuote.length < 8) return false;
-  if (normSource.includes(normQuote)) return true;
-  // Quotes may be truncated for long sentences — allow prefix match on the quote.
-  const words = normQuote.split(" ");
-  if (words.length >= 6) {
-    const prefix = words.slice(0, 6).join(" ");
-    return normSource.includes(prefix);
-  }
-  return false;
+  return normText(text).includes(normQuote);
+}
+
+/**
+ * Deterministic containment for answer-bearing fields (MCQ correct options,
+ * accepted/model answers, concept names): the normalized span must occur
+ * verbatim in the normalized source material. Shorter than evidence quotes, so
+ * the minimum length is smaller — but an unsupported span is always rejected.
+ */
+export function isSourceSpan(text: string, span: string): boolean {
+  const normSpan = normText(span);
+  if (normSpan.length < 3) return false;
+  return normText(text).includes(normSpan);
 }
 
 /** Concept-name similarity used to avoid near-duplicate concepts. */

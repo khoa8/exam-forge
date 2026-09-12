@@ -1,7 +1,7 @@
 import type { Concept, Evidence, McqOption, Question, SourceType } from "../types";
 import { ProviderError, type MaterialProvider, type ProviderOutput } from "./index";
 import { validateQuestionSet } from "../validate";
-import { extractTitle, quoteIsGrounded } from "../extract";
+import { extractTitle, isSourceSpan, quoteIsGrounded } from "../extract";
 import { scanForInjection, wrapUntrustedMaterial, injectionNotice } from "./sanitize";
 import { randomId } from "../util";
 
@@ -10,9 +10,15 @@ import { randomId } from "../util";
  *
  * The adapter is used ONLY when explicitly configured with an API key; it is
  * never a hard dependency. Its output passes through the same zod schema
- * validation and deterministic grounding checks as the demo provider — invalid
- * questions are dropped, and if too few survive the caller falls back to the
- * demo path.
+ * validation and deterministic grounding/provenance checks as the demo
+ * provider — invalid questions are dropped, and if too few survive the caller
+ * falls back to the demo path.
+ *
+ * Provenance rules enforced here (on top of validate.ts):
+ *  - concept names and descriptions must be spans of the source material;
+ *  - learner-facing explanations are constructed deterministically from the
+ *    validated evidence quote. Model-written explanation prose is discarded:
+ *    it cannot be verified against the source without semantic judgment.
  *
  * The study material is treated as untrusted data: it is wrapped in a
  * nonce-delimited block and the model is instructed to treat it as passive data.
@@ -57,7 +63,6 @@ interface RawGenerated {
     acceptedAnswers?: unknown;
     modelAnswer?: unknown;
     keyTerms?: unknown;
-    explanation?: unknown;
     evidenceQuote?: unknown;
     difficulty?: unknown;
   }[];
@@ -123,7 +128,11 @@ export class GlmProvider implements MaterialProvider {
       const name = typeof c.name === "string" ? c.name.trim() : "";
       const description = typeof c.description === "string" ? c.description.trim() : "";
       const quote = typeof c.evidenceQuote === "string" ? c.evidenceQuote.trim() : "";
-      if (!name || !description || !quoteIsGrounded(sourceText, quote)) continue;
+      // Provenance: the concept identity and its learner-facing description must
+      // both be grounded in the source, not merely accompanied by a valid quote.
+      if (!name || !description || !quote) continue;
+      if (!isSourceSpan(sourceText, name)) continue;
+      if (!quoteIsGrounded(sourceText, description) || !quoteIsGrounded(sourceText, quote)) continue;
       const id = `c_${String(concepts.length + 1).padStart(2, "0")}_${randomId()}`;
       nameToId.set(name.toLowerCase(), id);
       const evidence: Evidence[] = [{ quote, section: undefined }];
@@ -144,7 +153,9 @@ export class GlmProvider implements MaterialProvider {
       const quote = typeof q.evidenceQuote === "string" ? q.evidenceQuote.trim() : "";
       if (!quote || !quoteIsGrounded(sourceText, quote)) continue;
       const prompt = typeof q.prompt === "string" ? q.prompt.trim() : "";
-      const explanation = typeof q.explanation === "string" ? q.explanation.trim() : "";
+      // Learner-facing explanations are built from the validated evidence quote;
+      // model-written explanation prose is never passed through.
+      const explanation = `The material states: "${quote}"`;
       const evidence: Evidence[] = [{ quote }];
       const difficulty: "easy" | "medium" | "hard" =
         q.difficulty === "easy" ? "easy" : q.difficulty === "hard" ? "hard" : "medium";
@@ -173,12 +184,14 @@ export class GlmProvider implements MaterialProvider {
           const correct = options[parsed.findIndex((o) => o === correctEntry)];
           questions.push({ ...base, type: "mcq", options, correctOptionId: correct.id });
         }
-      } else if (q.type === "truefalse" && typeof q.statement === "string" && quoteIsGrounded(sourceText, q.statement)) {
+      } else if (q.type === "truefalse" && typeof q.statement === "string" && (q.correctAnswer === true || q.correctAnswer === false)) {
+        // Key grounding is enforced per key by deterministic validation: statements
+        // keyed true must be verbatim source spans, statements keyed false must not.
         questions.push({
           ...base,
           type: "truefalse",
           statement: q.statement,
-          correctAnswer: q.correctAnswer === true,
+          correctAnswer: q.correctAnswer,
         });
       } else if (q.type === "short" && typeof q.modelAnswer === "string") {
         const accepted = Array.isArray(q.acceptedAnswers)
@@ -228,15 +241,16 @@ const SYSTEM_PROMPT = `You generate exam-preparation material from study text. Y
 Respond with ONLY a JSON object (no markdown fences) with this exact shape:
 {
   "title": "short course title",
-  "concepts": [{ "name": "...", "description": "one sentence from the source", "evidenceQuote": "an exact sentence copied from the source", "importance": 0..1 }],
-  "questions": [{ "conceptName": "name of one of the concepts", "type": "mcq"|"truefalse"|"short"|"explanation", "prompt": "...", "options": ["..."], "correctOption": 0-based-index, "statement": "...", "correctAnswer": true|false, "acceptedAnswers": ["..."], "modelAnswer": "...", "keyTerms": ["..."], "evidenceQuote": "an exact sentence copied from the source", "explanation": "why the answer is correct, grounded in the source", "difficulty": "easy"|"medium"|"hard" }]
+  "concepts": [{ "name": "...", "description": "one sentence copied from the source", "evidenceQuote": "an exact sentence copied from the source", "importance": 0..1 }],
+  "questions": [{ "conceptName": "name of one of the concepts", "type": "mcq"|"truefalse"|"short"|"explanation", "prompt": "...", "options": ["..."], "correctOption": 0-based-index, "statement": "...", "correctAnswer": true|false, "acceptedAnswers": ["..."], "modelAnswer": "...", "keyTerms": ["..."], "evidenceQuote": "an exact sentence copied from the source", "difficulty": "easy"|"medium"|"hard" }]
 }
 
 Rules:
 - Ground EVERYTHING in the provided material. Never invent facts, definitions, dates or claims.
 - evidenceQuote must be an exact sentence copied from the material.
+- Concept names, descriptions, correct answers, accepted answers and model answers must be exact words or spans copied from the material.
 - For mcq: 4 plausible options, exactly one correct, distractors must relate to the material.
-- Omit fields that do not apply to a question's type.`;
+- Omit fields that do not apply to a question's type. Learner-facing explanations are constructed by ExamForge from the quoted evidence, so do not include an explanation field.`;
 
 function buildUserPrompt(text: string, _sourceType: SourceType): string {
   return [
