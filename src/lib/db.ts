@@ -97,19 +97,29 @@ function getUserVersion(db: DatabaseSync): number {
 }
 
 /**
- * Apply pending migrations in order. Each migration (schema change + version
- * stamp) commits atomically, so a failed migration rolls back completely and
- * the database stays honestly at its previous version. A database written by a
- * NEWER version of the application fails clearly instead of being mutated.
+ * Refuse databases written by a NEWER version of this application before any
+ * persistent database state (e.g. journal_mode) is changed. Purely reads the
+ * schema version; performs no mutation.
  */
-export function runMigrations(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): void {
-  let version = getUserVersion(db);
-  if (version > SCHEMA_VERSION) {
+export function assertSupportedSchema(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): void {
+  const version = getUserVersion(db);
+  const maxSupported = migrations[migrations.length - 1].version;
+  if (version > maxSupported) {
     throw new Error(
-      `Database schema version ${version} is newer than this application supports (version ${SCHEMA_VERSION}). ` +
+      `Database schema version ${version} is newer than this application supports (version ${maxSupported}). ` +
         "Refusing to migrate. Update ExamForge to a newer release, or restore a compatible database.",
     );
   }
+}
+
+/**
+ * Apply pending migrations in order. Each migration (schema change + version
+ * stamp) commits atomically, so a failed migration rolls back completely and
+ * the database stays honestly at its previous version.
+ */
+export function runMigrations(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): void {
+  assertSupportedSchema(db, migrations);
+  let version = getUserVersion(db);
   for (const migration of migrations) {
     if (migration.version <= version) continue;
     db.exec("BEGIN");
@@ -129,6 +139,9 @@ export function runMigrations(db: DatabaseSync, migrations: readonly Migration[]
 }
 
 function migrate(db: DatabaseSync): void {
+  // Compatibility first: refuse a future schema version before any persistent
+  // mutation — journal_mode = WAL changes persistent database state.
+  assertSupportedSchema(db);
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   runMigrations(db);

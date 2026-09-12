@@ -155,21 +155,34 @@ describe("sqlite schema versioning and migrations", () => {
   });
 
   it("fails clearly on a database written by a newer schema version and leaves it untouched", () => {
-    // Prepare a current-version DB, then stamp it as being from the future.
+    // Prepare a current-version DB with sentinel data, then stamp it as being
+    // from the future and force a known non-WAL journal mode.
     setDbPathForTests(dbFile);
     seedCourseWithProgress("crs_future");
+    // Release the app's cached handle so the journal mode can be switched.
+    setDbPathForTests(path.join(os.tmpdir(), `examforge-mig-release-${Date.now()}.sqlite`));
     const raw = openRaw(dbFile);
     raw.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+    raw.exec("PRAGMA journal_mode = DELETE;");
     const before = raw.prepare("SELECT COUNT(*) AS n FROM courses").get() as { n: number };
+    const sentinel = raw.prepare("SELECT title FROM courses WHERE id = 'crs_future'").get() as { title: string };
+    const journalBefore = (raw.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode;
     raw.close();
+    expect(journalBefore.toLowerCase()).toBe("delete");
 
+    // Opening through the application must refuse BEFORE any persistent mutation.
     setDbPathForTests(dbFile);
     expect(() => getDb()).toThrow(/newer than this application supports/i);
-    // The file must not have been mutated by the refused migration attempt.
+    // The file must not have been mutated by the refused open attempt:
+    // version, data and journal mode are all exactly as before.
     const check = openRaw(dbFile);
     expect(getUserVersion(check)).toBe(SCHEMA_VERSION + 1);
     const after = check.prepare("SELECT COUNT(*) AS n FROM courses").get() as { n: number };
     expect(after.n).toBe(before.n);
+    const sentinelAfter = check.prepare("SELECT title FROM courses WHERE id = 'crs_future'").get() as { title: string };
+    expect(sentinelAfter.title).toBe(sentinel.title);
+    const journalAfter = (check.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode;
+    expect(journalAfter.toLowerCase()).toBe("delete");
     check.close();
   });
 
