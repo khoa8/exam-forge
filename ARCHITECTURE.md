@@ -122,12 +122,16 @@ survive.
 
 - **Unit** (`tests/unit`): extraction, schemas, validation gates, grading, mastery,
   readiness, sampling, ingestion (incl. generated PDF fixtures), injection, provider
-  fallback.
+  fallback, provider provenance (local HTTP stub for the GLM adapter).
 - **Integration** (`tests/integration`): full bundled-demo flow over the real service
   layer + scratch SQLite file — diagnostic → weak topics → practice → mock → readiness →
   persistence, plus lock/consistency rules.
-- **E2E** (`tests/e2e/smoke.spec.ts`): the same journey through the real UI with
-  Playwright against a live server.
+- **E2E** (`tests/e2e`): the bundled-demo journey through the real UI with Playwright
+  against a loopback-only dev server on a dedicated port, using a disposable SQLite
+  database (temp dir via `EXAMFORGE_DB_PATH`) and the pinned demo provider; servers are
+  never reused and real learner data is never touched. A separate production smoke suite
+  (`playwright.prod-smoke.config.ts`, `npm run test:smoke:prod`) verifies the production
+  build/start path with the same isolation rules.
 
 ## UI structure
 

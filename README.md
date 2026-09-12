@@ -15,7 +15,8 @@ It is deliberately **not** a "chat with your PDF" app. The core loop is active r
 
 ## Quick start
 
-Requires Node.js 22+ (local persistence uses the built-in `node:sqlite` module).
+Requires Node.js **22.13+** (local persistence uses the built-in `node:sqlite` module,
+enabled without flags from Node 22.13; the repo pins this via `engines` and `.nvmrc`).
 
 ```bash
 npm install
@@ -77,15 +78,20 @@ duplicate removal) before it reaches you.
 ## Scripts
 
 ```bash
-npm run dev          # dev server on :3000
-npm run build        # production build
-npm start            # run the production build
-npm test             # unit + integration tests (vitest)
-npm run test:e2e     # Playwright journey test (starts its own server)
-npm run typecheck    # tsc --noEmit
-npm run lint         # eslint
-npm run db:reset     # delete local progress data
+npm run dev              # dev server on 127.0.0.1:3000
+npm run build            # production build
+npm start                # run the production build
+npm test                 # unit + integration tests (vitest)
+npm run test:e2e         # Playwright journey test (own loopback server, disposable DB)
+npm run test:smoke:prod  # production build + smoke test on an isolated server
+npm run typecheck        # tsc --noEmit
+npm run lint             # eslint
+npm run db:reset         # delete local progress data
 ```
+
+Browser tests never touch your local course data: `test:e2e` and `test:smoke:prod` start
+their own server on a dedicated port with a disposable SQLite database in a temp
+directory, pinned to the deterministic demo provider.
 
 ## Privacy
 
