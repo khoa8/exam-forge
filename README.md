@@ -96,5 +96,5 @@ npm run db:reset     # delete local progress data
 - The GLM adapter is implemented but only tested against its failure/fallback paths in CI;
   it is off by default.
 
-See [FINAL_REPORT.md](FINAL_REPORT.md) for the full verified-behavior report and
-[ARCHITECTURE.md](ARCHITECTURE.md) for how it fits together.
+See [PRODUCT.md](PRODUCT.md) for the product contract and [ARCHITECTURE.md](ARCHITECTURE.md)
+for the technical design and system invariants.
