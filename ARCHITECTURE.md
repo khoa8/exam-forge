@@ -68,25 +68,40 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    improve a score.
 3. **Mock exams hide correctness until submission** — the API returns `grade: null`
    during mock sessions (tested).
-4. **Every generated question passes deterministic validation** — schema membership,
-   exactly-one-correct-option, option-id uniqueness, near-duplicate prompts, and an
-   ambiguity guard (correct answer ≈ distractor).
-5. **Exact grounding and answer provenance (deterministic, fail-closed)** —
+4. **Generated content crosses one shared trust boundary** — every candidate goes
+   through `validateQuestionSet`, which first parses it against the canonical zod
+   schemas (runtime validation, not TypeScript casts) and then applies the semantic
+   gates: exactly-one-correct-option, option-id/text uniqueness, near-duplicate prompts,
+   and an ambiguity guard (correct answer ≈ distractor). Both providers pass through the
+   same boundary; concepts are gated by `validateConcept` plus `validateConceptProvenance`.
+5. **Exact grounding and evidence-scoped answer provenance (deterministic, fail-closed)** —
    `extract.ts::quoteIsGrounded` accepts an evidence quote only when its normalized form
-   is a contiguous substring of the normalized source; there is no prefix/partial
-   fallback, so a real prefix can never legitimize a fabricated suffix. Additionally,
-   every answer-bearing field must be proven from the source: MCQ correct option text
-   (`isSourceSpan` containment), true/false statements keyed true (verbatim span; a
-   statement keyed false must NOT be verbatim, otherwise the key contradicts the
-   material), short accepted/model answers (source spans), explanation model answers
-   (source span) and key terms (derivable from source words by normalized containment or
-   stemming), and learner-facing explanations (must quote a grounded evidence quote).
-   The GLM adapter constructs explanations deterministically from the validated evidence
-   quote and never passes model-written explanation prose to the learner. Unsupported
-   candidates are dropped, never repaired; if fewer than 3 questions survive a provider
-   falls back or fails per the provider-mode contract (tested).
-6. **Injection-filtered extraction** — sentences matching instruction patterns never
-   become concepts or evidence quotes (tested with an injected fixture).
+   is a token-bounded contiguous span of the normalized source; there is no prefix/partial
+   fallback, and a span that only occurs inside a larger word is not grounded. Evidence,
+   statements and concept fields that match instruction patterns are rejected even when
+   the text genuinely appears in the uploaded material (untrusted instruction data is not
+   evidence). Answer-bearing fields are scoped to the question's validated evidence plus
+   its concept's validated evidence/description — occurring elsewhere in the document is
+   NOT provenance: MCQ correct options, true/false statements keyed true, short
+   accepted/model answers and explanation model answers must all be token-bounded spans of
+   that scope, and explanation grading terms must derive from it (the GLM adapter derives
+   them deterministically from the validated evidence quote; the model's term list is
+   ignored). A statement keyed false is never proven false by mere absence of verbatim
+   text: untrusted provider false candidates are dropped, and the demo generator's false
+   statements carry a `falseProof` (source sentence + replaced subject) that validation
+   re-derives to verify the transformation. Concepts must be supported by their own
+   description/evidence (name occurs in them) and cannot rely on synthetic filler — a
+   concept without grounded, non-instruction description content is dropped. Learner-facing
+   explanations quote a grounded evidence quote; the GLM adapter constructs prompts,
+   explanations and grading terms deterministically from validated content and requires
+   every distractor to be a verbatim source span, so model-written factual prose never
+   reaches the learner. Unsupported candidates are dropped, never repaired; if fewer than
+   3 questions survive, the provider falls back or fails per the provider-mode contract
+   (tested).
+6. **Injection-filtered extraction** — instruction-like content can never become a
+   concept candidate via headings, bold terms, definition sentences or repeated
+   capitalized phrases, and instruction-like provider-supplied fields are rejected at the
+   trust boundary (tested with injected fixtures).
 7. **Provider independence** — the GLM adapter can fail arbitrarily; the registry falls
    back to the demo provider with a visible notice when the mode allows fallback (tested).
 
@@ -98,12 +113,14 @@ Node's built-in `node:sqlite` — no native dependencies. Tables: `courses`, `co
 derived data). WAL mode for concurrent dev-server reads.
 
 Schema evolution is versioned with `PRAGMA user_version` and an ordered, append-only
-migration list (`src/lib/db.ts`). New databases apply all migrations once and are stamped
-at the current version; existing databases migrate forward, one transaction per migration
-(schema change + version stamp commit atomically), so a failed migration rolls back fully
-and the database stays honestly at its previous version. A database written by a newer
-schema version is refused with a clear error instead of being mutated. Applied migration
-entries are never rewritten; there is no destructive reset in normal startup.
+migration list (`src/lib/db.ts`). On open, the schema version is checked BEFORE any
+persistent database state is changed: a database written by a newer schema version is
+refused with a clear error while the file remains byte-for-byte untouched (journal mode
+included). New databases then apply all migrations once and are stamped at the current
+version; existing databases migrate forward, one transaction per migration (schema change
++ version stamp commit atomically), so a failed migration rolls back fully and the
+database stays honestly at its previous version. Applied migration entries are never
+rewritten; there is no destructive reset in normal startup.
 
 ## Local network boundary
 

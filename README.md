@@ -76,8 +76,8 @@ falls back to the demo provider and says so. Setting `EXAMFORGE_PROVIDER=glm` fo
 LLM path — failures then surface as clear errors instead of falling back. Provider
 configuration errors name the offending environment variable (the API key is never
 included). All generated content — from any provider — must pass the same deterministic
-validation (schema, answer provenance against the source, grounding quotes, duplicate
-removal) before it reaches you.
+validation (canonical schemas, evidence-scoped answer provenance, exact grounding quotes,
+instruction filtering, duplicate removal) before it reaches you.
 
 ## Scripts
 
