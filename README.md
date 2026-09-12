@@ -93,8 +93,8 @@ npm run db:reset     # delete local progress data
 - Readiness is a heuristic over this app's answers only — it is not a real exam prediction.
 - No OCR, no multi-user accounts (single local learner), no scheduling beyond simple
   review hints.
-- The GLM adapter is implemented but only tested against its failure/fallback paths in CI;
-  it is off by default.
+- The GLM adapter is implemented and covered by automated mapping/failure/fallback tests,
+  but it has not been verified against a live paid endpoint and is off by default.
 
 See [PRODUCT.md](PRODUCT.md) for the product contract and [ARCHITECTURE.md](ARCHITECTURE.md)
 for the technical design and system invariants.
