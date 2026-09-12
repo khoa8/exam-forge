@@ -74,30 +74,32 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    gates: exactly-one-correct-option, option-id/text uniqueness, near-duplicate prompts,
    and an ambiguity guard (correct answer ≈ distractor). Both providers pass through the
    same boundary; concepts are gated by `validateConcept` plus `validateConceptProvenance`.
-5. **Exact grounding and evidence-scoped answer provenance (deterministic, fail-closed)** —
+5. **Exact grounding and per-field provenance (deterministic, fail-closed)** —
    `extract.ts::quoteIsGrounded` accepts an evidence quote only when its normalized form
    is a token-bounded contiguous span of the normalized source; there is no prefix/partial
    fallback, and a span that only occurs inside a larger word is not grounded. Evidence,
    statements and concept fields that match instruction patterns are rejected even when
    the text genuinely appears in the uploaded material (untrusted instruction data is not
-   evidence). Answer-bearing fields are scoped to the question's validated evidence plus
-   its concept's validated evidence/description — occurring elsewhere in the document is
-   NOT provenance: MCQ correct options, true/false statements keyed true, short
-   accepted/model answers and explanation model answers must all be token-bounded spans of
-   that scope, and explanation grading terms must derive from it (the GLM adapter derives
-   them deterministically from the validated evidence quote; the model's term list is
-   ignored). A statement keyed false is never proven false by mere absence of verbatim
-   text: untrusted provider false candidates are dropped, and the demo generator's false
-   statements carry a `falseProof` (source sentence + replaced subject) that validation
-   re-derives to verify the transformation. Concepts must be supported by their own
-   description/evidence (name occurs in them) and cannot rely on synthetic filler — a
-   concept without grounded, non-instruction description content is dropped. Learner-facing
-   explanations quote a grounded evidence quote; the GLM adapter constructs prompts,
-   explanations and grading terms deterministically from validated content and requires
-   every distractor to be a verbatim source span, so model-written factual prose never
-   reaches the learner. Unsupported candidates are dropped, never repaired; if fewer than
-   3 questions survive, the provider falls back or fails per the provider-mode contract
-   (tested).
+   evidence). Provenance relationships are validated **independently per field — a valid
+   sibling field can never launder a cross-wired one**: a concept's description and each
+   of its evidence quotes must each support the concept on their own (the concept name is
+   a token-bounded span of each); a question's evidence must belong to the question's
+   concept (a span of the concept's validated description/evidence, or a quote that names
+   the concept — a real sentence about another concept in the same document is not
+   evidence); and answer-bearing fields — MCQ correct options, true/false statements keyed
+   true, short accepted/model answers, explanation model answers and grading terms — are
+   proven from the question's own validated, concept-aligned evidence only, never from a
+   union with concept fields. A statement keyed false is never proven false by mere
+   absence of verbatim text: untrusted provider false candidates are dropped, and the demo
+   generator's false statements carry a `falseProof` (source sentence + replaced subject)
+   that validation re-derives to verify the transformation. A concept without grounded,
+   non-instruction, independently-supporting description/evidence content is dropped; no
+   synthetic filler is created. Learner-facing explanations quote the question's validated
+   evidence; the GLM adapter constructs prompts, explanations and grading terms
+   deterministically from validated content and requires every distractor to be a
+   verbatim source span, so model-written factual prose never reaches the learner.
+   Unsupported candidates are dropped, never repaired; if fewer than 3 questions survive,
+   the provider falls back or fails per the provider-mode contract (tested).
 6. **Injection-filtered extraction** — instruction-like content can never become a
    concept candidate via headings, bold terms, definition sentences or repeated
    capitalized phrases, and instruction-like provider-supplied fields are rejected at the
