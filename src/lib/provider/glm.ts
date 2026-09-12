@@ -26,6 +26,13 @@ import { randomId } from "../util";
 
 const PROVIDER_NAME = "glm";
 
+export interface RawGlmConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  timeoutMs: string | number;
+}
+
 export interface GlmConfig {
   apiKey: string;
   baseUrl: string;
@@ -33,15 +40,52 @@ export interface GlmConfig {
   timeoutMs: number;
 }
 
-export function getGlmConfigFromEnv(): GlmConfig | null {
+/**
+ * Read the GLM configuration from the environment without validating it.
+ * Returns null when no API key is configured (the deterministic demo path is used).
+ * Validation happens when the adapter is actually used, so a misconfigured
+ * optional provider falls back to demo with an actionable notice instead of
+ * blocking the no-key path; in forced `glm` mode the error surfaces loudly.
+ * Error messages name the offending environment variable and never include the key.
+ */
+export function getGlmRawConfigFromEnv(): RawGlmConfig | null {
   const apiKey = process.env.EXAMFORGE_LLM_API_KEY || process.env.GLM_API_KEY || "";
   if (!apiKey) return null;
   return {
     apiKey,
-    baseUrl: (process.env.EXAMFORGE_LLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4").replace(/\/$/, ""),
+    baseUrl: process.env.EXAMFORGE_LLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
     model: process.env.EXAMFORGE_LLM_MODEL || "glm-4-flash",
-    timeoutMs: Number(process.env.EXAMFORGE_LLM_TIMEOUT_MS || 30_000),
+    timeoutMs: process.env.EXAMFORGE_LLM_TIMEOUT_MS || 30_000,
   };
+}
+
+/** Validate provider configuration at a clear boundary. */
+export function validateGlmConfig(raw: RawGlmConfig): GlmConfig {
+  const baseUrl = raw.baseUrl.trim().replace(/\/+$/, "");
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(baseUrl);
+  } catch {
+    throw new ProviderError(
+      `Invalid EXAMFORGE_LLM_BASE_URL "${raw.baseUrl}" — it must be an absolute http(s) URL.`,
+    );
+  }
+  if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    throw new ProviderError(
+      `Invalid EXAMFORGE_LLM_BASE_URL "${raw.baseUrl}" — the protocol must be http or https.`,
+    );
+  }
+  const model = raw.model.trim();
+  if (!model) {
+    throw new ProviderError("EXAMFORGE_LLM_MODEL is empty — set it to a model name (for example glm-4-flash).");
+  }
+  const timeout = typeof raw.timeoutMs === "number" ? raw.timeoutMs : Number(raw.timeoutMs.trim() || NaN);
+  if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 300_000) {
+    throw new ProviderError(
+      `Invalid EXAMFORGE_LLM_TIMEOUT_MS "${raw.timeoutMs}" — it must be an integer between 1000 and 300000 (milliseconds).`,
+    );
+  }
+  return { apiKey: raw.apiKey, baseUrl, model, timeoutMs: timeout };
 }
 
 interface RawGenerated {
@@ -72,26 +116,27 @@ export class GlmProvider implements MaterialProvider {
   name = PROVIDER_NAME;
   requiresKey = true;
 
-  constructor(private readonly config: GlmConfig) {}
+  constructor(private readonly rawConfig: RawGlmConfig) {}
 
   async generate(text: string, sourceType: SourceType): Promise<ProviderOutput> {
-    const raw = await this.callModel(text, sourceType);
-    return this.mapAndValidate(raw, text);
+    const config = validateGlmConfig(this.rawConfig);
+    const raw = await this.callModel(text, sourceType, config);
+    return this.mapAndValidate(raw, text, config);
   }
 
-  private async callModel(text: string, sourceType: SourceType): Promise<RawGenerated> {
+  private async callModel(text: string, sourceType: SourceType, config: GlmConfig): Promise<RawGenerated> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
     try {
-      const res = await fetch(`${this.config.baseUrl}/chat/completions`, {
+      const res = await fetch(`${config.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.apiKey}`,
+          Authorization: `Bearer ${config.apiKey}`,
         },
         signal: controller.signal,
         body: JSON.stringify({
-          model: this.config.model,
+          model: config.model,
           temperature: 0.2,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
@@ -111,7 +156,7 @@ export class GlmProvider implements MaterialProvider {
     } catch (err) {
       if (err instanceof ProviderError) throw err;
       if ((err as Error).name === "AbortError") {
-        throw new ProviderError(`GLM request timed out after ${this.config.timeoutMs}ms`);
+        throw new ProviderError(`GLM request timed out after ${config.timeoutMs}ms`);
       }
       throw new ProviderError(`GLM request failed: ${(err as Error).message}`, err);
     } finally {
@@ -119,7 +164,7 @@ export class GlmProvider implements MaterialProvider {
     }
   }
 
-  private mapAndValidate(raw: RawGenerated, text: string): ProviderOutput {
+  private mapAndValidate(raw: RawGenerated, text: string, config: GlmConfig): ProviderOutput {
     const sourceText = text;
     const concepts: Concept[] = [];
     const nameToId = new Map<string, string>();
@@ -167,7 +212,7 @@ export class GlmProvider implements MaterialProvider {
         explanation,
         evidence,
         difficulty,
-        generator: `${PROVIDER_NAME}:${this.config.model}`,
+        generator: `${PROVIDER_NAME}:${config.model}`,
       };
       if (q.type === "mcq" && Array.isArray(q.options)) {
         const rawOptions = q.options as unknown[];
@@ -219,12 +264,12 @@ export class GlmProvider implements MaterialProvider {
 
     const scan = scanForInjection(text);
     const notes: string[] = [
-      `Concepts and questions were generated by ${this.config.model} and validated against the source material.`,
+      `Concepts and questions were generated by ${config.model} and validated against the source material.`,
     ];
     if (scan.detected) notes.push(injectionNotice());
 
     return {
-      provider: `${PROVIDER_NAME}:${this.config.model}`,
+      provider: `${PROVIDER_NAME}:${config.model}`,
       title: typeof raw.title === "string" && raw.title.trim() ? raw.title.trim() : extractTitle(sourceText),
       concepts,
       questions: validation.accepted,

@@ -117,14 +117,18 @@ local paths, provider configuration details or material-derived data.
 ## Provider abstraction
 
 `MaterialProvider.generate(text, sourceType) → ProviderOutput`. Selection order:
-`EXAMFORGE_PROVIDER=glm|demo|auto` (auto = GLM if a key exists, else demo). Forced `glm`
-is an explicit contract: when GLM is unavailable or its output is rejected, the request
-fails loudly instead of silently substituting demo content; `auto` treats GLM as
-best-effort and falls back to the demo provider with a visible notice. GLM output is
-parsed from a JSON block, remapped (concepts, answers and explanations provenance-checked
-per the key invariants above), validated with the same gates as demo output, and rejected
-(→ fallback in `auto`, error in forced `glm`) if fewer than 3 grounded concepts/questions
-survive.
+`EXAMFORGE_PROVIDER=glm|demo|auto` (auto = GLM if a key exists, else demo; any other
+value is rejected with an actionable error). Forced `glm` is an explicit contract: when
+GLM is unavailable, misconfigured, or its output is rejected, the request fails loudly
+instead of silently substituting demo content; `auto` treats GLM as best-effort and falls
+back to the demo provider with a visible notice. Provider configuration (base URL, model,
+timeout) is validated when the adapter is actually used, with errors that name the
+offending environment variable and never include the key — so a misconfigured optional
+provider degrades to the demo path with an honest notice instead of blocking the no-key
+flow. GLM output is parsed from a JSON block, remapped (concepts, answers and
+explanations provenance-checked per the key invariants above), validated with the same
+gates as demo output, and rejected (→ fallback in `auto`, error in forced `glm`) if fewer
+than 3 grounded concepts/questions survive.
 
 ## Testing strategy
 

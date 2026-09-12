@@ -168,6 +168,12 @@ export default function HomePage() {
         <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg px-4 py-3">{notice}</p>
       )}
 
+      <p className="text-xs text-slate-500 max-w-3xl mx-auto text-center">
+        Privacy note: your material and progress stay on this machine. If you configure an external LLM provider
+        (see <code className="text-slate-600">.env.example</code>), pasted or uploaded material is sent to that
+        provider for generation; without a key, everything runs locally with the deterministic demo provider.
+      </p>
+
       <section className="space-y-3">
         <h2 className="font-semibold text-lg">Your courses</h2>
         {courses === null ? (
