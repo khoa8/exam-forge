@@ -97,6 +97,14 @@ Node's built-in `node:sqlite` — no native dependencies. Tables: `courses`, `co
 `questions`, `sessions`, `attempts` (cascade deletes; deleting a course removes all
 derived data). WAL mode for concurrent dev-server reads.
 
+Schema evolution is versioned with `PRAGMA user_version` and an ordered, append-only
+migration list (`src/lib/db.ts`). New databases apply all migrations once and are stamped
+at the current version; existing databases migrate forward, one transaction per migration
+(schema change + version stamp commit atomically), so a failed migration rolls back fully
+and the database stays honestly at its previous version. A database written by a newer
+schema version is refused with a clear error instead of being mutated. Applied migration
+entries are never rewritten; there is no destructive reset in normal startup.
+
 ## Local network boundary
 
 ExamForge is a local, single-user application with no auth layer, so the normal dev and
