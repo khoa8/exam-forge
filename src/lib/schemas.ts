@@ -43,6 +43,12 @@ export const trueFalseQuestionSchema = questionBaseSchema.extend({
   type: z.literal("truefalse"),
   statement: z.string().min(8),
   correctAnswer: z.boolean(),
+  falseProof: z
+    .object({
+      sourceQuote: z.string().min(8),
+      originalSubject: z.string().min(1),
+    })
+    .optional(),
 });
 
 export const shortQuestionSchema = questionBaseSchema.extend({

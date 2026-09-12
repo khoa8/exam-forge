@@ -54,6 +54,13 @@ export interface TrueFalseQuestion extends QuestionBase {
   type: "truefalse";
   statement: string;
   correctAnswer: boolean;
+  /**
+   * Deterministic proof for false-keyed statements: the statement was derived
+   * from `sourceQuote` (a grounded, non-instruction source sentence) by replacing
+   * `originalSubject` with the concept name. Required for false statements;
+   * without it a false key cannot be verified and the question is rejected.
+   */
+  falseProof?: { sourceQuote: string; originalSubject: string };
 }
 
 export interface ShortQuestion extends QuestionBase {

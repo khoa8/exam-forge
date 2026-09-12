@@ -180,13 +180,20 @@ export function extractConcepts(text: string, maxConcepts = 10): ExtractionResul
     const heading = section.heading;
     const bodyOffset = section.start + (heading.length > 0 ? heading.length + 1 : 0);
 
+    // Untrusted material: instruction-like content must never become a concept
+    // candidate, regardless of which extraction path found it.
     if (heading && !isGenericHeading(heading) && !isQuestionHeading(heading) && heading.length <= 60) {
-      addCandidate(candidates, heading.replace(/[.:?!]+$/, ""), 3, bodyOffset, heading, null);
+      if (!looksLikeInstruction(heading)) {
+        addCandidate(candidates, heading.replace(/[.:?!]+$/, ""), 3, bodyOffset, heading, null);
+      }
     }
 
     // Bold markdown terms: **term**
     for (const bm of section.body.matchAll(/\*\*(.{3,60}?)\*\*/g)) {
-      addCandidate(candidates, bm[1].replace(/[.:]$/, ""), 2, bodyOffset + (bm.index ?? 0), heading, null);
+      const term = bm[1].replace(/[.:]$/, "");
+      if (!looksLikeInstruction(term)) {
+        addCandidate(candidates, term, 2, bodyOffset + (bm.index ?? 0), heading, null);
+      }
     }
 
     const sentences = splitSentences(section.body);
@@ -212,6 +219,7 @@ export function extractConcepts(text: string, maxConcepts = 10): ExtractionResul
   for (const section of sections) {
     for (const cm of section.body.matchAll(/\b(?:[A-Z][a-z]{2,}\s+){1,3}[A-Z][a-z]{2,}\b/g)) {
       const phrase = cm[0].trim();
+      if (looksLikeInstruction(phrase)) continue;
       const offset = section.start + (cm.index ?? 0);
       const key = normText(phrase);
       const existing = candidates.get(key);
@@ -241,22 +249,26 @@ export function extractConcepts(text: string, maxConcepts = 10): ExtractionResul
   }
 
   const maxScore = Math.max(1, ...kept.map((c) => c.score));
-  const concepts: Concept[] = kept
-    .filter((c) => c.score >= 1.5)
-    .slice(0, maxConcepts)
-    .map((c, i) => {
-      const description = c.definitionSentence
-        ? c.definitionSentence
-        : firstMentionSentence(normalized, c.name) ?? `Key topic "${c.name}" appears repeatedly in the material.`;
-      const evidence = buildEvidence(normalized, description, c.section, c.firstOffset);
-      return {
-        id: `c_${String(i + 1).padStart(2, "0")}_${randomId()}`,
-        name: c.name,
-        description,
-        evidence,
-        importance: Math.min(1, c.score / maxScore),
-      };
+  // First-mention fallback sentences are searched in section bodies only — a
+  // heading line is not a content sentence and must not become a description.
+  const bodyText = sections.map((s) => s.body).join("\n");
+  const concepts: Concept[] = [];
+  for (const c of kept.filter((c) => c.score >= 1.5).slice(0, maxConcepts)) {
+    // A concept must have grounded, non-instruction, non-synthetic description
+    // content: either its definition sentence or a real first-mention sentence.
+    // Synthetic filler must never turn an ungrounded candidate into a concept.
+    const description = c.definitionSentence ?? firstMentionSentence(bodyText, c.name);
+    if (!description) continue;
+    const evidence = buildEvidence(normalized, description, c.section, c.firstOffset);
+    if (evidence.length === 0) continue;
+    concepts.push({
+      id: `c_${String(concepts.length + 1).padStart(2, "0")}_${randomId()}`,
+      name: c.name,
+      description,
+      evidence,
+      importance: Math.min(1, c.score / maxScore),
     });
+  }
 
   // Quality assessment — be honest about weak extractions.
   const wordCount = normalized.split(/\s+/).filter(Boolean).length;
@@ -295,26 +307,38 @@ export function buildEvidence(text: string, sentence: string, section?: string, 
 
 /**
  * Grounding audit for evidence quotes: a quote is grounded only when its
- * normalized form is a contiguous substring of the normalized source. There is
- * deliberately no prefix fallback — a real prefix must never legitimize a
- * fabricated suffix. Formatting tolerance comes from normalization only.
+ * normalized form is a contiguous, token-bounded substring of the normalized
+ * source. There is deliberately no prefix fallback — a real prefix must never
+ * legitimize a fabricated suffix. Formatting tolerance comes from normalization
+ * only.
  */
 export function quoteIsGrounded(text: string, quote: string): boolean {
   const normQuote = normText(quote);
   if (normQuote.length < 8) return false;
-  return normText(text).includes(normQuote);
+  return isSourceSpan(text, quote);
 }
 
 /**
- * Deterministic containment for answer-bearing fields (MCQ correct options,
- * accepted/model answers, concept names): the normalized span must occur
- * verbatim in the normalized source material. Shorter than evidence quotes, so
- * the minimum length is smaller — but an unsupported span is always rejected.
+ * Deterministic containment for evidence and answer-bearing fields (MCQ correct
+ * options, accepted/model answers, concept names): the normalized span must
+ * occur verbatim in the normalized text, with word boundaries — a span is not
+ * "grounded" merely because it appears inside an unrelated larger word.
  */
 export function isSourceSpan(text: string, span: string): boolean {
   const normSpan = normText(span);
   if (normSpan.length < 3) return false;
-  return normText(text).includes(normSpan);
+  const norm = normText(text);
+  if (norm.length === 0) return false;
+  const wordChar = /[a-z0-9]/;
+  let idx = norm.indexOf(normSpan);
+  while (idx !== -1) {
+    const before = idx === 0 ? "" : norm[idx - 1];
+    const end = idx + normSpan.length;
+    const after = end >= norm.length ? "" : norm[end];
+    if ((!before || !wordChar.test(before)) && (!after || !wordChar.test(after))) return true;
+    idx = norm.indexOf(normSpan, idx + 1);
+  }
+  return false;
 }
 
 /** Concept-name similarity used to avoid near-duplicate concepts. */

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DemoProvider } from "@/lib/provider/demo";
 import { GlmProvider } from "@/lib/provider/glm";
 import { generateWithFallback, resolveProvider } from "@/lib/provider/registry";
+import { validateConcept, validateQuestion } from "@/lib/schemas";
 import { SAMPLE_MATERIAL } from "@/sample/material";
 
 describe("demo provider", () => {
@@ -15,6 +16,20 @@ describe("demo provider", () => {
     const correctA = a.questions.map((q) => (q.type === "mcq" ? q.correctOptionId : q.type === "truefalse" ? q.correctAnswer : ""));
     const correctB = b.questions.map((q) => (q.type === "mcq" ? q.correctOptionId : q.type === "truefalse" ? q.correctAnswer : ""));
     expect(correctA).toEqual(correctB);
+  });
+
+  it("output passes the canonical runtime schemas for every accepted concept and question", async () => {
+    const output = await new DemoProvider().generate(SAMPLE_MATERIAL);
+    expect(output.concepts.length).toBeGreaterThan(0);
+    expect(output.questions.length).toBeGreaterThan(0);
+    for (const c of output.concepts) {
+      const parsed = validateConcept(c);
+      expect(parsed.ok).toBe(true);
+    }
+    for (const q of output.questions) {
+      const parsed = validateQuestion(q);
+      expect(parsed.ok).toBe(true);
+    }
   });
 
   it("rejects material with no extractable concepts", async () => {

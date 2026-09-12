@@ -12,7 +12,7 @@ import { randomId } from "../util";
  */
 
 const INJECTION_PATTERNS: RegExp[] = [
-  /ignore\s+(all|any|the|your|previous|prior|above)\s+(instructions?|prompts?|rules?)/i,
+  /(?:ignore|disregard|forget)\s+(?:(?:all|any|the|your)\s+)?(?:previous|prior|above|earlier)\s+instructions?/i,
   /disregard\s+(all|any|the|your|previous|prior|above)/i,
   /forget\s+(all|any|the|your|previous|prior|above)\s+(instructions?|prompts?)/i,
   /reveal(ing)?\s+(your\s+)?(system\s+)?(prompt|instructions|secrets?|api\s*keys?)/i,
