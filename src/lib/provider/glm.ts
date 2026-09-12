@@ -343,7 +343,8 @@ Respond with ONLY a JSON object (no markdown fences) with this exact shape:
 Rules:
 - Ground EVERYTHING in the provided material. Never invent facts, definitions, dates or claims.
 - evidenceQuote, statement, descriptions, model answers, accepted answers and MCQ options must be exact words or spans copied from the material.
-- concept names must appear in their own description or evidence sentence.
+- Concept names must appear in their own description AND in their own evidence sentence.
+- Every question evidenceQuote must belong to its concept (a sentence about the concept itself, ideally containing the concept name).
 - For mcq: use exact source spans as options (distractors may come from other parts of the material), exactly one correct, no fabricated option text.
 - For truefalse: only send statements that are exact source sentences, always with "correctAnswer": true.
 - Omit fields that do not apply to a question's type. Prompts, explanations and grading key terms are constructed by ExamForge from the validated evidence; do not include them.`;

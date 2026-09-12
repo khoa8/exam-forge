@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateQuestionSet } from "@/lib/validate";
+import { validateConceptProvenance, validateQuestionSet } from "@/lib/validate";
 import type { Concept, Question } from "@/lib/types";
 
 const SOURCE = `# Test material
@@ -521,5 +521,178 @@ describe("answer provenance gates (F-02 class)", () => {
     const result = validateQuestionSet([tooManyOptions], SOURCE, concepts);
     expect(result.accepted).toHaveLength(0);
     expect(result.rejected[0].errors).toContain("schema validation failed");
+  });
+});
+
+describe("per-field concept provenance (no union laundering)", () => {
+  const photoSentence =
+    "Photosynthesis is the process by which plants convert light energy into chemical energy.";
+  const chloroSentence = "Chlorophyll is the green pigment that absorbs light in plant leaves.";
+
+  function conceptWith(name: string, description: string, evidence: string): Concept {
+    return {
+      id: "c_cross",
+      name,
+      description,
+      evidence: [{ quote: evidence }],
+      importance: 1,
+    };
+  }
+
+  it("rejects a concept whose description is cross-wired even when the evidence is correct", () => {
+    const c = conceptWith("Photosynthesis", chloroSentence, photoSentence);
+    const errors = validateConceptProvenance(c, SOURCE);
+    expect(errors.some((e) => /description does not support the concept name/.test(e))).toBe(true);
+  });
+
+  it("rejects a concept whose evidence is cross-wired even when the description is correct", () => {
+    const c = conceptWith("Photosynthesis", photoSentence, chloroSentence);
+    const errors = validateConceptProvenance(c, SOURCE);
+    expect(errors.some((e) => /evidence does not support the concept name/.test(e))).toBe(true);
+  });
+
+  it("accepts a concept whose description and evidence each independently support it", () => {
+    const c = conceptWith("Photosynthesis", photoSentence, photoSentence);
+    expect(validateConceptProvenance(c, SOURCE)).toHaveLength(0);
+  });
+});
+
+describe("question evidence must belong to the question's concept (mixed cross-wires)", () => {
+  const photoSentence =
+    "Photosynthesis is the process by which plants convert light energy into chemical energy.";
+  const chloroSentence = "Chlorophyll is the green pigment that absorbs light in plant leaves.";
+  const chloroExplanation = `The material states: "${chloroSentence}"`;
+
+  it("rejects a cross-wired MCQ whose internally consistent answer matches the wrong evidence", () => {
+    // The exact laundering class: real Photosynthesis concept, real Chlorophyll
+    // evidence quote, Chlorophyll definition as the "correct" option. Every
+    // string exists in the source; the provenance edges are still wrong.
+    const crossWired: Question = {
+      ...baseMcq,
+      evidence: [{ quote: chloroSentence }],
+      explanation: chloroExplanation,
+      options: [
+        { id: "o1", text: "process by which plants convert light energy into chemical energy" },
+        { id: "o2", text: "green pigment that absorbs light in plant leaves" },
+        { id: "o3", text: "process by which cells release energy stored in glucose" },
+      ],
+      correctOptionId: "o2",
+    };
+    const result = validateQuestionSet([crossWired], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected[0].errors.join(" ")).toMatch(/evidence does not belong to the question's concept/);
+  });
+
+  it("rejects wrong-concept evidence even when the correct answer belongs to the right concept", () => {
+    // The evidence itself is validated: a right answer cannot rescue wrong evidence.
+    const rightAnswerWrongEvidence: Question = {
+      ...baseMcq,
+      evidence: [{ quote: chloroSentence }],
+      explanation: chloroExplanation,
+      options: [
+        { id: "o1", text: "process by which cells release energy stored in glucose" },
+        { id: "o2", text: "green pigment that absorbs light in plant leaves" },
+        { id: "o3", text: "process by which plants convert light energy into chemical energy" },
+      ],
+      correctOptionId: "o3",
+    };
+    const result = validateQuestionSet([rightAnswerWrongEvidence], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected[0].errors.join(" ")).toMatch(/evidence does not belong to the question's concept/);
+  });
+
+  it("rejects a mixed cross-wired short answer", () => {
+    const crossWired: Question = {
+      id: "q_short_mixed",
+      conceptId: "c1",
+      conceptName: "Photosynthesis",
+      type: "short",
+      prompt: "Fill in the blank according to the material.",
+      modelAnswer: "Chlorophyll",
+      acceptedAnswers: ["Chlorophyll"],
+      explanation: chloroExplanation,
+      evidence: [{ quote: chloroSentence }],
+      difficulty: "medium",
+      generator: "test",
+    };
+    const result = validateQuestionSet([crossWired], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected[0].errors.join(" ")).toMatch(/evidence does not belong to the question's concept/);
+  });
+
+  it("accepts a short answer whose evidence and answer belong to the concept", () => {
+    const ok: Question = {
+      id: "q_short_aligned",
+      conceptId: "c2",
+      conceptName: "Chlorophyll",
+      type: "short",
+      prompt: "Fill in the blank according to the material.",
+      modelAnswer: "Chlorophyll",
+      acceptedAnswers: ["Chlorophyll"],
+      explanation: `The material states: "${chloroSentence}"`,
+      evidence: [{ quote: chloroSentence }],
+      difficulty: "medium",
+      generator: "test",
+    };
+    const result = validateQuestionSet([ok], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
+  });
+
+  it("rejects an explanation that is internally consistent with wrong-concept evidence", () => {
+    const crossWired: Question = {
+      id: "q_expl_mixed",
+      conceptId: "c1",
+      conceptName: "Photosynthesis",
+      type: "explanation",
+      prompt: "In your own words, explain what Photosynthesis is, according to the material.",
+      modelAnswer: chloroSentence,
+      keyTerms: ["green", "pigment"],
+      explanation: chloroExplanation,
+      evidence: [{ quote: chloroSentence }],
+      difficulty: "hard",
+      generator: "test",
+    };
+    const result = validateQuestionSet([crossWired], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected[0].errors.join(" ")).toMatch(/evidence does not belong to the question's concept/);
+  });
+
+  it("rejects a mixed cross-wired true statement", () => {
+    const crossWired: Question = {
+      id: "q_tf_mixed",
+      conceptId: "c1",
+      conceptName: "Photosynthesis",
+      type: "truefalse",
+      prompt: "According to the material, is this statement true or false?",
+      statement: chloroSentence,
+      correctAnswer: true,
+      explanation: chloroExplanation,
+      evidence: [{ quote: chloroSentence }],
+      difficulty: "easy",
+      generator: "test",
+    };
+    const result = validateQuestionSet([crossWired], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected[0].errors.join(" ")).toMatch(/evidence does not belong to the question's concept/);
+  });
+
+  it("accepts a true statement whose evidence and statement belong to the concept", () => {
+    const ok: Question = {
+      id: "q_tf_aligned",
+      conceptId: "c1",
+      conceptName: "Photosynthesis",
+      type: "truefalse",
+      prompt: "According to the material, is this statement true or false?",
+      statement: photoSentence,
+      correctAnswer: true,
+      explanation: `The material states: "${photoSentence}"`,
+      evidence: [{ quote: photoSentence }],
+      difficulty: "easy",
+      generator: "test",
+    };
+    const result = validateQuestionSet([ok], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
   });
 });

@@ -520,6 +520,72 @@ describe("GLM adapter answer provenance", () => {
     expect(derived.every((t) => evidenceStems.has(lightStem(t)))).toBe(true);
   });
 
+  it("removes the cross-wired question from provider output (evidence from the wrong concept)", async () => {
+    const raw = {
+      title: "Plant Biology",
+      concepts: groundedConcepts(),
+      questions: [
+        {
+          // The laundering candidate: valid Photosynthesis concept, real
+          // Chlorophyll evidence quote, Chlorophyll definition as the correct
+          // answer. Every string is a genuine source span; the provenance edges
+          // are still wrong, so the question must never reach the learner.
+          conceptName: "Photosynthesis",
+          type: "mcq",
+          options: [
+            "process by which plants convert light energy into chemical energy",
+            "green pigment that absorbs light in plant leaves",
+            "process by which cells release energy stored in glucose",
+          ],
+          correctOption: 1,
+          evidenceQuote: CHLORO_QUOTE,
+          difficulty: "easy",
+        },
+        {
+          conceptName: "Photosynthesis",
+          type: "mcq",
+          options: [
+            "process by which cells release energy stored in glucose",
+            "process by which plants convert light energy into chemical energy",
+            "green pigment that absorbs light in plant leaves",
+          ],
+          correctOption: 1,
+          evidenceQuote: PHOTO_QUOTE,
+          difficulty: "easy",
+        },
+        {
+          conceptName: "Chlorophyll",
+          type: "truefalse",
+          statement: CHLORO_QUOTE,
+          correctAnswer: true,
+          evidenceQuote: CHLORO_QUOTE,
+          difficulty: "easy",
+        },
+        {
+          conceptName: "Cellular respiration",
+          type: "short",
+          modelAnswer: "Cellular respiration",
+          acceptedAnswers: ["Cellular respiration"],
+          evidenceQuote: RESPIRATION_QUOTE,
+          difficulty: "medium",
+        },
+      ],
+    };
+
+    const provider = await providerReturning(glmResponsePayload(raw));
+    const output = await provider.generate(SOURCE, "paste");
+
+    // The cross-wired candidate is rejected, not persisted, and no
+    // Photosynthesis question carries the wrong concept's evidence.
+    expect(output.questions).toHaveLength(3);
+    for (const q of output.questions) {
+      if (q.conceptName === "Photosynthesis") {
+        expect(q.evidence[0].quote).toBe(PHOTO_QUOTE);
+      }
+    }
+    expect(output.rejected.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("rejects the whole output (ProviderError) when too few grounded questions survive", async () => {
     const raw = {
       title: "Plant Biology",

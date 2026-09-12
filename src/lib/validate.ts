@@ -39,21 +39,43 @@ export interface ValidationResult {
 }
 
 /**
- * Provenance scope for one question's answer-bearing fields: the validated
- * evidence of the question plus the validated evidence/description of its
- * concept. Source-global containment outside this scope is not provenance.
+ * Provenance model (per-field, no union laundering):
+ *
+ *   Concept    name --> description        (name must be a token-bounded span)
+ *              name --> each evidence      (each must support the concept alone)
+ *   Question   conceptId --> evidence      (evidence must belong to the concept)
+ *              evidence --> answer fields  (answers proven from question-local
+ *                                           evidence only)
+ *
+ * Every provenance edge must be valid on its own: a valid sibling field can
+ * never make a cross-wired field acceptable, and source-global occurrence is
+ * not provenance.
  */
-function provenanceScope(q: Question, concept: Concept | undefined): string {
-  const parts: string[] = [];
-  for (const ev of q.evidence) parts.push(ev.quote);
-  if (concept) {
-    parts.push(concept.description);
-    for (const ev of concept.evidence) parts.push(ev.quote);
-  }
-  return parts.filter((p) => p && p.trim().length > 0).join("\n");
+
+/** The question's own validated evidence — the only provenance basis for answers. */
+function questionEvidenceText(q: Question): string {
+  return q.evidence
+    .map((ev) => ev.quote)
+    .filter((p) => p && p.trim().length > 0)
+    .join("\n");
 }
 
-/** Every key term driving coverage grading must be derivable from the provenance scope. */
+/**
+ * Deterministic concept relationship for a question evidence quote: it belongs
+ * to the concept when it is (a) derived from the concept's validated
+ * description/evidence, or (b) itself names the concept. A quote about another
+ * concept that merely exists in the same document supports nothing.
+ */
+function evidenceSupportsConcept(quote: string, concept: Concept): boolean {
+  if (isSourceSpan(quote, concept.name)) return true;
+  if (isSourceSpan(concept.description, quote)) return true;
+  for (const ev of concept.evidence) {
+    if (isSourceSpan(ev.quote, quote)) return true;
+  }
+  return false;
+}
+
+/** Every key term driving coverage grading must be derivable from the given provenance text. */
 function keyTermSupported(scope: string, term: string): boolean {
   if (isSourceSpan(scope, term)) return true;
   const scopeStems = new Set(contentWords(scope).map(lightStem));
@@ -93,7 +115,22 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
 
   const concept = concepts.find((c) => c.id === q.conceptId);
   if (!concept) errors.push(`unknown conceptId ${q.conceptId}`);
-  const scope = provenanceScope(q, concept);
+
+  // Question evidence must belong to the current concept: a real sentence about
+  // another concept is not evidence for this question, even though it exists in
+  // the same source document.
+  if (concept) {
+    for (const ev of q.evidence ?? []) {
+      if (!evidenceSupportsConcept(ev.quote, concept)) {
+        errors.push("question evidence does not belong to the question's concept");
+        break;
+      }
+    }
+  }
+
+  // Answer-bearing fields are proven from the question's OWN validated evidence
+  // (now concept-aligned) — never from a union that could launder cross-wiring.
+  const evidenceText = questionEvidenceText(q);
 
   switch (q.type) {
     case "mcq": {
@@ -111,9 +148,8 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
         }
       }
       // Provenance: the correct answer must be a token-bounded span of the
-      // question's/concept's validated evidence — occurring elsewhere in the
-      // source document is not sufficient.
-      if (correctText && !isSourceSpan(scope, correctText)) {
+      // question's own validated, concept-aligned evidence.
+      if (correctText && !isSourceSpan(evidenceText, correctText)) {
         errors.push("correct answer text is not grounded in the question's validated evidence");
       }
       break;
@@ -126,11 +162,11 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
         break;
       }
       if (q.correctAnswer === true) {
-        // A "true" statement must be verbatim from the source AND supported by the
-        // scoped evidence contract.
+        // A "true" statement must be verbatim from the source AND supported by
+        // the question's own concept-aligned evidence.
         if (!quoteIsGrounded(sourceText, q.statement)) {
           errors.push("true statement is not grounded in the source");
-        } else if (concept && !isSourceSpan(scope, q.statement)) {
+        } else if (!isSourceSpan(evidenceText, q.statement)) {
           errors.push("true statement is not supported by the question's validated evidence");
         }
       } else if (q.correctAnswer === false) {
@@ -162,14 +198,15 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
       if (!q.acceptedAnswers || q.acceptedAnswers.length === 0) errors.push("no accepted answers");
       if (q.acceptedAnswers.some((a) => normAnswer(a).length === 0)) errors.push("empty accepted answer");
       if (!q.modelAnswer || normAnswer(q.modelAnswer).length === 0) errors.push("model answer missing");
-      // Provenance: graded answers must be token-bounded spans of the scoped
-      // evidence — unrelated terms from elsewhere in the document are rejected.
-      if (q.modelAnswer && normAnswer(q.modelAnswer).length > 0 && !isSourceSpan(scope, q.modelAnswer)) {
+      // Provenance: graded answers must be token-bounded spans of the question's
+      // own validated, concept-aligned evidence — unrelated terms from elsewhere
+      // in the document (or from the concept's other fields) are rejected.
+      if (q.modelAnswer && normAnswer(q.modelAnswer).length > 0 && !isSourceSpan(evidenceText, q.modelAnswer)) {
         errors.push("model answer is not grounded in the question's validated evidence");
       }
       if (q.acceptedAnswers) {
         for (const a of q.acceptedAnswers) {
-          if (normAnswer(a).length > 0 && !isSourceSpan(scope, a)) {
+          if (normAnswer(a).length > 0 && !isSourceSpan(evidenceText, a)) {
             errors.push(`accepted answer not grounded in the question's validated evidence: "${a.slice(0, 50)}"`);
             break;
           }
@@ -181,13 +218,13 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
       if (!q.keyTerms || q.keyTerms.length < 2) errors.push("not enough key terms for grading");
       if (!q.modelAnswer || normText(q.modelAnswer).length < 10) errors.push("model answer missing");
       // Provenance: the model answer and every grading term must be supported by
-      // the scoped evidence, not by arbitrary source-global provider words.
-      if (q.modelAnswer && normText(q.modelAnswer).length >= 10 && !isSourceSpan(scope, q.modelAnswer)) {
+      // the question's own validated, concept-aligned evidence.
+      if (q.modelAnswer && normText(q.modelAnswer).length >= 10 && !isSourceSpan(evidenceText, q.modelAnswer)) {
         errors.push("model answer is not grounded in the question's validated evidence");
       }
       if (q.keyTerms && q.keyTerms.length > 0) {
         for (const t of q.keyTerms) {
-          if (!keyTermSupported(scope, t)) {
+          if (!keyTermSupported(evidenceText, t)) {
             errors.push(`key term not grounded in the question's validated evidence: "${t.slice(0, 50)}"`);
             break;
           }
@@ -274,8 +311,9 @@ export function validateQuestionSet(
 /**
  * Concept-level trust boundary, shared by all providers: a concept is acceptable
  * only when its name, description and evidence are grounded, non-instruction
- * source content AND the description/evidence actually support the concept
- * (the name occurs in them) rather than being independent source-global spans.
+ * source content AND every provenance-bearing field independently supports the
+ * concept (the name is a token-bounded span of the description and of each
+ * evidence quote). One correct field can never launder a cross-wired sibling.
  */
 export function validateConceptProvenance(concept: Concept, sourceText: string): string[] {
   const errors: string[] = [];
@@ -295,6 +333,9 @@ export function validateConceptProvenance(concept: Concept, sourceText: string):
     }
   }
 
+  if (name && !isSourceSpan(sourceText, name)) {
+    errors.push("concept name not found in source material");
+  }
   if (description && !quoteIsGrounded(sourceText, description)) {
     errors.push("concept description not found in source material");
   }
@@ -305,10 +346,16 @@ export function validateConceptProvenance(concept: Concept, sourceText: string):
     }
   }
 
-  // Alignment: the concept identity must be supported by its own description or
-  // evidence, otherwise the mapping cross-wired two concepts.
-  if (name && !isSourceSpan(description, name) && !((concept.evidence ?? []).some((ev) => isSourceSpan(ev.quote, name)))) {
-    errors.push("concept name is not supported by its own description/evidence");
+  // Independent per-field alignment: the description and each evidence quote
+  // must each support the concept on its own.
+  if (name && description && !isSourceSpan(description, name)) {
+    errors.push("concept description does not support the concept name");
+  }
+  for (const ev of concept.evidence ?? []) {
+    if (name && !isSourceSpan(ev.quote, name)) {
+      errors.push("concept evidence does not support the concept name");
+      break;
+    }
   }
 
   return errors;

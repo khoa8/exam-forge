@@ -18,10 +18,17 @@ describe("demo provider", () => {
     expect(correctA).toEqual(correctB);
   });
 
-  it("output passes the canonical runtime schemas for every accepted concept and question", async () => {
+  it("output passes the canonical runtime schemas and keeps all question types", async () => {
     const output = await new DemoProvider().generate(SAMPLE_MATERIAL);
-    expect(output.concepts.length).toBeGreaterThan(0);
-    expect(output.questions.length).toBeGreaterThan(0);
+    // Positive control: the stricter per-field provenance contract must not
+    // eliminate normal deterministic generation.
+    expect(output.concepts.length).toBeGreaterThanOrEqual(8);
+    expect(output.questions.length).toBeGreaterThanOrEqual(20);
+    const types = new Set(output.questions.map((q) => q.type));
+    expect(types.has("mcq")).toBe(true);
+    expect(types.has("truefalse")).toBe(true);
+    expect(types.has("short")).toBe(true);
+    expect(types.has("explanation")).toBe(true);
     for (const c of output.concepts) {
       const parsed = validateConcept(c);
       expect(parsed.ok).toBe(true);
