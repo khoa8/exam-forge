@@ -15,10 +15,17 @@ It is deliberately **not** a "chat with your PDF" app. The core loop is active r
 
 ## Quick start
 
+Requires Node.js 22+ (local persistence uses the built-in `node:sqlite` module).
+
 ```bash
 npm install
-npm run dev            # http://localhost:3000
+npm run dev            # http://127.0.0.1:3000 (loopback only)
 ```
+
+The dev and production servers bind to `127.0.0.1` by default, so your study material and
+progress stay on your machine and the app is not reachable from other devices on your
+network. To expose it deliberately (not recommended for private material), override the
+host in the underlying command.
 
 No API key needed. Click **“Load bundled demo material”** on the home page and you get a
 full course ("Introduction to Human Memory", 10 concepts, ~40 questions) generated
@@ -83,6 +90,7 @@ npm run db:reset     # delete local progress data
 ## Privacy
 
 - Material and progress never leave your machine unless you configure an LLM key.
+- Servers bind to loopback (`127.0.0.1`) by default in both `npm run dev` and `npm start`.
 - Deleting a course removes its material, concepts, questions, and progress.
 - Readiness/mastery numbers are internal study heuristics, not predictions.
 

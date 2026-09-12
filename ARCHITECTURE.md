@@ -97,6 +97,15 @@ Node's built-in `node:sqlite` — no native dependencies. Tables: `courses`, `co
 `questions`, `sessions`, `attempts` (cascade deletes; deleting a course removes all
 derived data). WAL mode for concurrent dev-server reads.
 
+## Local network boundary
+
+ExamForge is a local, single-user application with no auth layer, so the normal dev and
+production entrypoints (`npm run dev`, `npm start`) bind the HTTP server to loopback
+(`127.0.0.1`) by default. The app is not reachable from other machines unless a user
+deliberately overrides the host. There is no account/auth subsystem; the loopback default
+plus local SQLite is the privacy boundary. `/api/health` returns only `{ ok: true }` — no
+local paths, provider configuration details or material-derived data.
+
 ## Provider abstraction
 
 `MaterialProvider.generate(text, sourceType) → ProviderOutput`. Selection order:
