@@ -121,6 +121,8 @@ Study material may be private or copyrighted.
 - Avoid unnecessary retention or logging of study content.
 - Do not publish or reuse private user material as demos/fixtures.
 - Disclose when configured external providers receive material.
+- The application is local-first: servers bind to loopback (127.0.0.1) by default, so
+  material and progress are not reachable from other machines.
 - Preserve clear delete/clear behavior for locally stored course data.
 - Bundled demo material must be safe to redistribute.
 

@@ -70,10 +70,14 @@ cp .env.example .env.local
 # set EXAMFORGE_LLM_API_KEY, optionally EXAMFORGE_PROVIDER=glm
 ```
 
-If the LLM call fails or its output doesn't pass validation, ExamForge automatically falls
-back to the demo provider and says so. All generated content — from any provider — must
-pass the same deterministic validation (schema, answer-key membership, grounding quotes,
-duplicate removal) before it reaches you.
+By default (`EXAMFORGE_PROVIDER=auto`), the adapter is used only when a key is configured;
+if the LLM call fails, is misconfigured, or its output doesn't pass validation, ExamForge
+falls back to the demo provider and says so. Setting `EXAMFORGE_PROVIDER=glm` forces the
+LLM path — failures then surface as clear errors instead of falling back. Provider
+configuration errors name the offending environment variable (the API key is never
+included). All generated content — from any provider — must pass the same deterministic
+validation (schema, answer provenance against the source, grounding quotes, duplicate
+removal) before it reaches you.
 
 ## Scripts
 

@@ -120,6 +120,7 @@ npm run lint
 npm test
 npm run test:e2e
 npm run build
+npm run test:smoke:prod
 ```
 
 For persistence changes, also exercise the affected migration/data lifecycle against a disposable database.
