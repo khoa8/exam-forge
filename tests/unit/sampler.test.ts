@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sampleDiagnostic, sampleMock, samplePractice, shuffleSeeded } from "@/lib/sampler";
+import { diagnosticEligibleQuestions, sampleDiagnostic, sampleMock, samplePractice, shuffleSeeded } from "@/lib/sampler";
 import type { Concept, Question } from "@/lib/types";
 
 function makeQuestions(): { questions: Question[]; concepts: Concept[] } {
@@ -72,5 +72,21 @@ describe("balanced sampling", () => {
     const items = [1, 2, 3, 4, 5];
     expect(shuffleSeeded(items, "s")).toEqual(shuffleSeeded(items, "s"));
     expect(shuffleSeeded(items, "s")).not.toEqual(items); // actually shuffled
+  });
+});
+
+describe("diagnostic eligibility (shared with the course viability gate)", () => {
+  it("keeps auto-gradable types and drops explanation questions", () => {
+    const { questions } = makeQuestions();
+    const eligible = diagnosticEligibleQuestions(questions);
+    expect(eligible.every((q) => q.type !== "explanation")).toBe(true);
+    expect(eligible.length).toBe(questions.filter((q) => q.type !== "explanation").length);
+  });
+
+  it("agrees with the real diagnostic sampling: no eligible questions means no diagnostic pick", () => {
+    const { questions, concepts } = makeQuestions();
+    const explanationOnly = questions.filter((q) => q.type === "explanation");
+    expect(diagnosticEligibleQuestions(explanationOnly)).toHaveLength(0);
+    expect(sampleDiagnostic(explanationOnly, concepts, "seedX")).toHaveLength(0);
   });
 });

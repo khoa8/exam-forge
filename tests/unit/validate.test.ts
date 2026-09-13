@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateConceptProvenance, validateQuestionSet } from "@/lib/validate";
+import { validateConceptProvenance, validateQuestionSet, validateCourseViability } from "@/lib/validate";
 import type { Concept, Question } from "@/lib/types";
 
 const SOURCE = `# Test material
@@ -694,5 +694,50 @@ describe("question evidence must belong to the question's concept (mixed cross-w
     const result = validateQuestionSet([ok], SOURCE, concepts);
     expect(result.accepted).toHaveLength(1);
     expect(result.rejected).toHaveLength(0);
+  });
+});
+
+describe("course viability gate (assessment acceptance, F-01 class)", () => {
+  const photoSentence = "Photosynthesis is the process by which plants convert light energy into chemical energy.";
+  const mcq = (id: string): Question => ({ ...baseMcq, id });
+  const explanation = (id: string): Question => ({
+    id,
+    conceptId: "c1",
+    conceptName: "Photosynthesis",
+    type: "explanation",
+    prompt: `In your own words, explain what Photosynthesis is, according to the material. Variant ${id}`,
+    modelAnswer: photoSentence,
+    keyTerms: ["process", "energy"],
+    explanation: `The material states: "${photoSentence}"`,
+    evidence: [{ quote: photoSentence }],
+    difficulty: "hard",
+    generator: "test",
+  });
+
+  it("accepts a set with at least 3 questions including a Diagnostic-eligible pool", () => {
+    expect(validateCourseViability([mcq("q1"), mcq("q2"), explanation("q3")])).toHaveLength(0);
+  });
+
+  it("rejects fewer than 3 validated questions even when auto-gradable", () => {
+    const errors = validateCourseViability([mcq("q1"), mcq("q2")]);
+    expect(errors.some((e) => /at least 3/.test(e))).toBe(true);
+  });
+
+  it("rejects individually valid questions that leave no Diagnostic-eligible pool", () => {
+    // The F-01 failure class: enough questions by count, but the diagnostic
+    // sampler only draws auto-gradable types, so it would find nothing to ask.
+    const errors = validateCourseViability([
+      explanation("q1"),
+      explanation("q2"),
+      explanation("q3"),
+      explanation("q4"),
+    ]);
+    expect(errors.some((e) => /auto-graded/.test(e))).toBe(true);
+    // The count invariant itself is satisfied here.
+    expect(errors.some((e) => /at least 3/.test(e))).toBe(false);
+  });
+
+  it("rejects an empty set with both violations", () => {
+    expect(validateCourseViability([])).toHaveLength(2);
   });
 });

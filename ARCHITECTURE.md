@@ -44,6 +44,9 @@ material text
 deterministic generation (provider/deterministic.ts)
    │ extract concepts → generate questions → validate (schemas + grounding + duplicates)
    ▼
+course acceptance gate (assessment viability: ≥3 validated questions, ≥1 diagnostic-eligible)
+   │
+   ▼
 db.insertCourse()  (courses, concepts, questions)
    │
    ▼
@@ -95,8 +98,11 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    concept without grounded, non-instruction, independently-supporting
    description/evidence content is dropped; no synthetic filler is created. Learner-facing
    explanations quote the question's validated evidence. Unsupported candidates are
-   dropped, never repaired; if fewer than 3 questions survive, course creation fails
-   honestly instead of padding with filler (tested).
+   dropped, never repaired. Course acceptance is gated on assessment viability before
+   persistence: at least 3 validated questions AND at least one question eligible for
+   the Diagnostic flow under the real sampling rules (auto-gradable types) are required,
+   otherwise course creation fails honestly with a controlled error instead of padding
+   with filler (tested).
 6. **Injection-filtered extraction** — instruction-like content can never become a
    concept candidate via headings, bold terms, definition sentences or repeated
    capitalized phrases, and instruction-like candidate fields are rejected at the
