@@ -13,7 +13,7 @@ import type {
   SessionSummary,
 } from "./types";
 import { db } from "./db";
-import { generateWithFallback } from "./provider/registry";
+import { generateDeterministic } from "./provider/deterministic";
 import { computeMastery } from "./mastery";
 import { computeReadiness } from "./readiness";
 import { gradeAnswer } from "./grade";
@@ -21,8 +21,8 @@ import { sampleDiagnostic, sampleMock, samplePractice } from "./sampler";
 import { randomId } from "./util";
 
 /**
- * Service layer: orchestrates providers, persistence, grading and the adaptive
- * model. API routes stay thin; all learning-loop rules live here.
+ * Service layer: orchestrates deterministic generation, persistence, grading
+ * and the adaptive model. API routes stay thin; all learning-loop rules live here.
  */
 
 export class NotFoundError extends Error {
@@ -47,14 +47,11 @@ export interface CreateCourseInput {
 }
 
 export async function createCourse(input: CreateCourseInput): Promise<{ courseId: string; course: Course; conceptCount: number; questionCount: number }> {
-  const output = await generateWithFallback(input.text, input.sourceType);
+  const output = generateDeterministic(input.text);
 
   const quality = { ...output.quality };
   if (input.ingestionWarnings.length > 0) {
     quality.notes = [...input.ingestionWarnings, ...quality.notes];
-  }
-  if (output.fallbackNotice) {
-    quality.notes = [...quality.notes, output.fallbackNotice];
   }
 
   const courseId = randomId("crs_");
@@ -66,8 +63,6 @@ export async function createCourse(input: CreateCourseInput): Promise<{ courseId
     createdAt: now,
     textLength: input.text.length,
     quality,
-    providerUsed: output.provider,
-    providerNotice: output.fallbackNotice ?? (output.provider.startsWith("glm") ? undefined : undefined),
   };
 
   db.insertCourse(
@@ -76,8 +71,10 @@ export async function createCourse(input: CreateCourseInput): Promise<{ courseId
       title: course.title,
       sourceType: course.sourceType,
       materialText: input.text,
-      providerUsed: output.provider,
-      providerNotice: output.fallbackNotice ?? null,
+      // Legacy provider metadata columns are kept for schema compatibility;
+      // every new course is recorded as deterministic local generation.
+      providerUsed: "deterministic",
+      providerNotice: null,
       qualityJson: JSON.stringify(quality),
       createdAt: now,
     },
@@ -196,8 +193,6 @@ function courseFromRow(row: NonNullable<ReturnType<typeof db.getCourse>>): Cours
     createdAt: row.createdAt,
     textLength: row.materialText.length,
     quality: JSON.parse(row.qualityJson),
-    providerUsed: row.providerUsed,
-    providerNotice: row.providerNotice ?? undefined,
   };
 }
 

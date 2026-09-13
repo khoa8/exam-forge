@@ -9,7 +9,6 @@ interface CourseListItem {
   title: string;
   sourceType: string;
   createdAt: string;
-  providerUsed: string;
   quality: { level: string; notes: string[] };
 }
 
@@ -186,9 +185,8 @@ export default function HomePage() {
       )}
 
       <p className="text-xs text-slate-500 max-w-3xl mx-auto text-center">
-        Privacy note: your material and progress stay on this machine. If you configure an external LLM provider
-        (see <code className="text-slate-600">.env.example</code>), pasted or uploaded material is sent to that
-        provider for generation; without a key, everything runs locally with the deterministic demo provider.
+        Privacy note: ExamForge runs entirely on your machine. Concepts, questions and feedback are generated locally
+        and deterministically — your material is never sent to an external AI service, and no API key is needed.
       </p>
 
       <section className="space-y-3">
@@ -208,7 +206,7 @@ export default function HomePage() {
                     {c.title}
                   </Link>
                   <p className="text-xs text-slate-500">
-                    {c.sourceType} · created {new Date(c.createdAt).toLocaleString()} · provider: {c.providerUsed} ·
+                    {c.sourceType} · created {new Date(c.createdAt).toLocaleString()} ·
                     extraction quality: {c.quality.level}
                   </p>
                 </div>

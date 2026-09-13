@@ -41,7 +41,7 @@ function seedCourseWithProgress(courseId: string): void {
       title: "Migration Test Course",
       sourceType: "paste",
       materialText: SAMPLE_MATERIAL,
-      providerUsed: "demo",
+      providerUsed: "deterministic",
       providerNotice: null,
       qualityJson: JSON.stringify({ level: "good", notes: [] }),
       createdAt: new Date().toISOString(),

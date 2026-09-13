@@ -12,7 +12,7 @@ import { looksLikeInstruction } from "./provider/sanitize";
  * definition (a discrimination exercise) rather than fabricating new claims.
  */
 
-const GENERATOR = "demo:deterministic";
+const GENERATOR = "deterministic";
 
 interface DefinitionInfo {
   sentence: string;

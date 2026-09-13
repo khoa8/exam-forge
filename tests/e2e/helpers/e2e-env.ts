@@ -7,7 +7,7 @@ import path from "node:path";
  * learner database or an arbitrary developer server:
  *  - a disposable SQLite file inside a temp directory is used via EXAMFORGE_DB_PATH;
  *  - each suite binds its own loopback-only server on a dedicated port;
- *  - the provider is pinned to the deterministic demo path (no key, no network);
+ *  - generation is deterministic and local (no key, no network);
  *  - the temp directory is recreated on setup and removed on teardown.
  */
 
@@ -31,6 +31,5 @@ export function teardownE2eEnv(): void {
 export function e2eServerEnv(): Record<string, string> {
   return {
     EXAMFORGE_DB_PATH: e2eDbPath(),
-    EXAMFORGE_PROVIDER: "demo",
   };
 }

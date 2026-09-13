@@ -64,7 +64,7 @@ export default function CourseDashboardPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-2xl font-bold">{course.title}</h1>
           <span className="text-xs text-slate-500">
-            {concepts.length} concepts · {overview.questionCount} questions · provider: {course.providerUsed}
+            {concepts.length} concepts · {overview.questionCount} questions
           </span>
         </div>
         <Stepper courseId={course.id} current="material" />

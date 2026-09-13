@@ -7,8 +7,7 @@ import { validateQuestion as parseQuestionSchema } from "./schemas";
 
 /**
  * Deterministic validation gates applied to every generated question before it is
- * accepted, regardless of provider. Invalid or low-quality questions are dropped,
- * never silently fixed.
+ * accepted. Invalid or low-quality questions are dropped, never silently fixed.
  *
  * Trust-boundary contract (enforced here, on the real acceptance path):
  *  1. Canonical runtime schemas — every candidate is parsed with the zod schemas
@@ -23,8 +22,8 @@ import { validateQuestion as parseQuestionSchema } from "./schemas";
  *     transformation (falseProof); absence of verbatim text never proves false.
  *  5. Learner-facing explanations must quote grounded source evidence.
  *
- * Unsupported candidates are dropped, never repaired; too few survivors trigger
- * the documented provider fallback/failure contract.
+ * Unsupported candidates are dropped, never repaired; if too few questions
+ * survive, course creation fails honestly instead of padding with filler.
  */
 
 export interface ValidationIssue {

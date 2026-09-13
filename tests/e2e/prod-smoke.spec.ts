@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
  * build/start server (started by playwright.prod-smoke.config.ts):
  *   build starts -> health responds -> home loads -> bundled demo enters the
  *   actual learning path (course created, concepts extracted, diagnostic runs).
- * Deterministic demo provider; no key and no network.
+ * Deterministic local generation; no key and no network.
  */
 
 test("production build: health, home and bundled demo diagnostic", async ({ page }) => {
@@ -25,7 +25,7 @@ test("production build: health, home and bundled demo diagnostic", async ({ page
   await page.getByRole("button", { name: /load bundled demo material/i }).click();
   await page.waitForURL(/\/course\/crs_/);
   await expect(page.getByRole("heading", { name: "Concepts from your material" })).toBeVisible();
-  await expect(page.getByText(/provider: demo/)).toBeVisible();
+  await expect(page.getByText(/\d+ concepts · \d+ questions/)).toBeVisible();
 
   // 4. The learning path actually starts: a diagnostic question is served.
   await page.getByRole("link", { name: "Diagnostic" }).click();

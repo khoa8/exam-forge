@@ -113,9 +113,6 @@ export interface Course {
   createdAt: string;
   textLength: number;
   quality: ExtractionQuality;
-  providerUsed: string;
-  /** Present when a configured LLM provider failed and the demo path was used. */
-  providerNotice?: string;
 }
 
 export type SessionKind = "diagnostic" | "practice" | "mock";

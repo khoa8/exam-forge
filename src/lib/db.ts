@@ -192,7 +192,9 @@ export interface CourseRow {
   title: string;
   sourceType: string;
   materialText: string;
+  /** Compatibility column from the removed provider era; always "deterministic" for new rows. */
   providerUsed: string;
+  /** Compatibility column, always null for new rows. */
   providerNotice: string | null;
   qualityJson: string;
   createdAt: string;

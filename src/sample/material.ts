@@ -3,8 +3,8 @@
  *
  * This is original content written for ExamForge (safe to redistribute).
  * It is deliberately well-structured — headings plus clear definition
- * sentences — so the deterministic demo provider can extract concepts and
- * generate grounded questions without any external model.
+ * sentences — so the deterministic generator can extract concepts and generate
+ * grounded questions locally without any external model.
  */
 
 export const SAMPLE_MATERIAL_TITLE = "Introduction to Human Memory";

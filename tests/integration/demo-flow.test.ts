@@ -42,7 +42,6 @@ describe("bundled demo flow (no API key)", () => {
     expect(overview.course.title).toBe("Introduction to Human Memory");
     expect(overview.concepts.length).toBeGreaterThanOrEqual(8);
     expect(overview.questionCount).toBeGreaterThanOrEqual(20);
-    expect(overview.course.providerUsed).toBe("demo");
 
     // 2. Grounded concepts: descriptions must come from the material.
     for (const c of overview.concepts) {

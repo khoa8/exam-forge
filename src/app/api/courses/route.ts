@@ -15,7 +15,6 @@ export async function GET() {
     title: c.title,
     sourceType: c.sourceType,
     createdAt: c.createdAt,
-    providerUsed: c.providerUsed,
     quality: JSON.parse(c.qualityJson) as { level: string; notes: string[] },
   }));
   return NextResponse.json({ courses });
