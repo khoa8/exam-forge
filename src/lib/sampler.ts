@@ -20,6 +20,15 @@ export function shuffleSeeded<T>(items: T[], seed: string): T[] {
 
 const AUTO_GRADABLE = new Set(["mcq", "truefalse", "short"]);
 
+/**
+ * The questions eligible for the Diagnostic flow under the real sampling rules:
+ * auto-gradable types only. Shared with the course-acceptance viability gate so
+ * "what a Diagnostic can sample" has exactly one definition.
+ */
+export function diagnosticEligibleQuestions(questions: Question[]): Question[] {
+  return questions.filter((q) => AUTO_GRADABLE.has(q.type));
+}
+
 export function sampleDiagnostic(
   questions: Question[],
   concepts: Concept[],
@@ -27,8 +36,7 @@ export function sampleDiagnostic(
   maxQuestions = 8,
 ): Question[] {
   const byConcept = new Map<string, Question[]>();
-  for (const q of questions) {
-    if (!AUTO_GRADABLE.has(q.type)) continue;
+  for (const q of diagnosticEligibleQuestions(questions)) {
     const list = byConcept.get(q.conceptId) ?? [];
     list.push(q);
     byConcept.set(q.conceptId, list);

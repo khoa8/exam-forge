@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ingestPdf, ingestText } from "@/lib/ingest";
-import { createCourse } from "@/lib/service";
+import { createCourse, MaterialNotViableError } from "@/lib/service";
 import { SAMPLE_MATERIAL, SAMPLE_MATERIAL_TITLE } from "@/sample/material";
 import { db } from "@/lib/db";
 
@@ -90,7 +90,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ courseId, course, conceptCount, questionCount }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create course.";
+    // Material that cannot support the learning loop is a client-content problem
+    // (422), not a server fault — the honest error message is returned as-is.
+    const status = err instanceof MaterialNotViableError ? 422 : 500;
     console.error("[POST /api/courses]", err);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status });
   }
 }

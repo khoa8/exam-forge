@@ -4,6 +4,7 @@ import { isSourceSpan, quoteIsGrounded } from "./extract";
 import { looksLikeInstruction } from "./provider/sanitize";
 import { swapSubject } from "./generate";
 import { validateQuestion as parseQuestionSchema } from "./schemas";
+import { diagnosticEligibleQuestions } from "./sampler";
 
 /**
  * Deterministic validation gates applied to every generated question before it is
@@ -233,6 +234,34 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
     }
   }
 
+  return errors;
+}
+
+/** Architecture contract: a persisted course needs at least this many validated questions. */
+export const MIN_COURSE_QUESTIONS = 3;
+
+/**
+ * Course acceptance gate, applied at the generation/service acceptance boundary
+ * before persistence: a course is only viable when its validated question set can
+ * actually support the core learning loop. That requires
+ *   1. at least MIN_COURSE_QUESTIONS validated questions (architecture contract),
+ *   2. at least one question eligible for the Diagnostic flow under the real
+ *      sampling rules (auto-gradable types).
+ * The gate fails closed with honest reasons; nothing is padded with filler to
+ * satisfy it. Returns the list of violation reasons (empty = viable).
+ */
+export function validateCourseViability(questions: Question[]): string[] {
+  const errors: string[] = [];
+  if (questions.length < MIN_COURSE_QUESTIONS) {
+    errors.push(
+      `only ${questions.length} validated question(s) could be generated (at least ${MIN_COURSE_QUESTIONS} are needed)`,
+    );
+  }
+  if (diagnosticEligibleQuestions(questions).length === 0) {
+    errors.push(
+      `none of the ${questions.length} validated question(s) can be auto-graded, so the Diagnostic step would have nothing to ask`,
+    );
+  }
   return errors;
 }
 

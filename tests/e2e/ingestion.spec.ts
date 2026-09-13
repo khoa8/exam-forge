@@ -22,6 +22,20 @@ const UNSTRUCTURED_TEXT =
   "Then I had some coffee at the kitchen table. After that, I went outside for a short walk " +
   "near the old canal. It was calm and quiet there, and I enjoyed it a lot.";
 
+const HEADINGS_WITHOUT_DEFINITIONS = `# Plant Water Notes
+
+## Osmosis
+Osmosis moves water across a semipermeable membrane toward the region of higher solute concentration.
+
+## Turgor
+Turgor pressure keeps soft plant stems firm and upright while the plant stays hydrated.
+
+## Wilting
+Wilting begins when water loss outpaces root uptake and cells lose their rigidity.
+
+## Xylem
+Xylem conduits lift water from the roots to the leaves through transpiration pull.`;
+
 async function expectStillOnHome(page: Page) {
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { level: 1 })).toContainText("adaptive exam coach");
@@ -54,6 +68,24 @@ test("unstructured material fails honestly without fabricating concepts", async 
   await expect(alert).toBeVisible({ timeout: 20_000 });
   await expect(alert).toContainText(/concepts/i);
   await expectStillOnHome(page);
+});
+
+test("material without assessable structure fails honestly without creating a course", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Study material").fill(HEADINGS_WITHOUT_DEFINITIONS);
+  await page.getByLabel("Course title (optional)").fill("Water Notes Probe");
+  await page.getByRole("button", { name: "Create course" }).click();
+  const alert = page.getByRole("alert").first();
+  await expect(alert).toBeVisible({ timeout: 20_000 });
+  // The rejection names the real limitation: not enough grounded assessment
+  // structure to enter the learning loop (no Diagnostic-eligible questions).
+  await expect(alert).toContainText(/enough grounded assessment structure/i);
+  await expect(alert).toContainText(/Diagnostic/i);
+  await expectStillOnHome(page);
+
+  // The course was never persisted.
+  await page.reload();
+  await expect(page.getByRole("link", { name: "Water Notes Probe" })).toHaveCount(0);
 });
 
 test("text-based PDF ingestion succeeds", async ({ page }) => {

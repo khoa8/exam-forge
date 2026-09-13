@@ -18,6 +18,7 @@ import { computeMastery } from "./mastery";
 import { computeReadiness } from "./readiness";
 import { gradeAnswer } from "./grade";
 import { sampleDiagnostic, sampleMock, samplePractice } from "./sampler";
+import { validateCourseViability } from "./validate";
 import { randomId } from "./util";
 
 /**
@@ -39,6 +40,17 @@ export class ConflictError extends Error {
   }
 }
 
+/**
+ * The supplied material was not sufficient to build a course that can enter the
+ * core learning loop. Controlled (not a server fault): nothing is persisted.
+ */
+export class MaterialNotViableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MaterialNotViableError";
+  }
+}
+
 export interface CreateCourseInput {
   text: string;
   sourceType: Course["sourceType"];
@@ -48,6 +60,17 @@ export interface CreateCourseInput {
 
 export async function createCourse(input: CreateCourseInput): Promise<{ courseId: string; course: Course; conceptCount: number; questionCount: number }> {
   const output = generateDeterministic(input.text);
+
+  // Assessment-viability gate (architecture invariant): reject a course that could
+  // not enter the core learning loop BEFORE anything is persisted.
+  const viabilityErrors = validateCourseViability(output.questions);
+  if (viabilityErrors.length > 0) {
+    throw new MaterialNotViableError(
+      "The supplied material did not contain enough grounded assessment structure to build a usable course: " +
+        `${viabilityErrors.join("; ")}. ` +
+        "Try material with headings and clear definition statements (for example 'X is …').",
+    );
+  }
 
   const quality = { ...output.quality };
   if (input.ingestionWarnings.length > 0) {
