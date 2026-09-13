@@ -7,7 +7,145 @@ import type { AttemptRecord } from "./mastery";
  * Persistence layer — SQLite via node:sqlite (no native install required).
  * All study material and learner progress stays in a local file: .data/examforge.sqlite
  * (override with EXAMFORGE_DB_PATH). The directory is gitignored.
+ *
+ * Schema evolution is versioned with `PRAGMA user_version`: new databases apply
+ * the ordered migration list once; existing databases migrate forward in
+ * per-migration transactions; databases from a newer version of the application
+ * are refused instead of mutated blindly.
  */
+
+export interface Migration {
+  /** Schema version this migration brings the database to. */
+  version: number;
+  /** Apply the schema change. Runs inside a transaction, together with the version stamp. */
+  up: (db: DatabaseSync) => void;
+}
+
+/** Ordered, append-only migration history. Never rewrite an applied entry. */
+export const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS courses (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          material_text TEXT NOT NULL,
+          provider_used TEXT NOT NULL,
+          provider_notice TEXT,
+          quality_json TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS concepts (
+          id TEXT PRIMARY KEY,
+          course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          evidence_json TEXT NOT NULL,
+          importance REAL NOT NULL,
+          ord INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_concepts_course ON concepts(course_id);
+
+        CREATE TABLE IF NOT EXISTS questions (
+          id TEXT PRIMARY KEY,
+          course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+          concept_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          ord INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_questions_course ON questions(course_id);
+
+        CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          concept_id TEXT,
+          question_ids_json TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_course ON sessions(course_id);
+
+        CREATE TABLE IF NOT EXISTS attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          course_id TEXT NOT NULL,
+          question_id TEXT NOT NULL,
+          concept_id TEXT NOT NULL,
+          answer_json TEXT NOT NULL,
+          score REAL NOT NULL,
+          correct INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(session_id, question_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_attempts_course ON attempts(course_id);
+      `);
+    },
+  },
+];
+
+/** Highest schema version understood by this build. */
+export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
+
+function getUserVersion(db: DatabaseSync): number {
+  const row = db.prepare("PRAGMA user_version").get() as { user_version: number | bigint };
+  return Number(row.user_version);
+}
+
+/**
+ * Refuse databases written by a NEWER version of this application before any
+ * persistent database state (e.g. journal_mode) is changed. Purely reads the
+ * schema version; performs no mutation.
+ */
+export function assertSupportedSchema(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): void {
+  const version = getUserVersion(db);
+  const maxSupported = migrations[migrations.length - 1].version;
+  if (version > maxSupported) {
+    throw new Error(
+      `Database schema version ${version} is newer than this application supports (version ${maxSupported}). ` +
+        "Refusing to migrate. Update ExamForge to a newer release, or restore a compatible database.",
+    );
+  }
+}
+
+/**
+ * Apply pending migrations in order. Each migration (schema change + version
+ * stamp) commits atomically, so a failed migration rolls back completely and
+ * the database stays honestly at its previous version.
+ */
+export function runMigrations(db: DatabaseSync, migrations: readonly Migration[] = MIGRATIONS): void {
+  assertSupportedSchema(db, migrations);
+  let version = getUserVersion(db);
+  for (const migration of migrations) {
+    if (migration.version <= version) continue;
+    db.exec("BEGIN");
+    try {
+      migration.up(db);
+      db.exec(`PRAGMA user_version = ${migration.version}`);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw new Error(
+        `Database migration to version ${migration.version} failed and was rolled back: ${(err as Error).message}`,
+        { cause: err },
+      );
+    }
+    version = migration.version;
+  }
+}
+
+function migrate(db: DatabaseSync): void {
+  // Compatibility first: refuse a future schema version before any persistent
+  // mutation — journal_mode = WAL changes persistent database state.
+  assertSupportedSchema(db);
+  db.exec("PRAGMA journal_mode = WAL;");
+  db.exec("PRAGMA foreign_keys = ON;");
+  runMigrations(db);
+}
 
 let cached: DatabaseSync | null = null;
 let cachedPath: string | null = null;
@@ -49,76 +187,14 @@ export function getDb(): DatabaseSync {
   return db;
 }
 
-function migrate(db: DatabaseSync): void {
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-
-    CREATE TABLE IF NOT EXISTS courses (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      material_text TEXT NOT NULL,
-      provider_used TEXT NOT NULL,
-      provider_notice TEXT,
-      quality_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS concepts (
-      id TEXT PRIMARY KEY,
-      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL,
-      evidence_json TEXT NOT NULL,
-      importance REAL NOT NULL,
-      ord INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_concepts_course ON concepts(course_id);
-
-    CREATE TABLE IF NOT EXISTS questions (
-      id TEXT PRIMARY KEY,
-      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-      concept_id TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      ord INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_questions_course ON questions(course_id);
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL,
-      concept_id TEXT,
-      question_ids_json TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at TEXT NOT NULL,
-      completed_at TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_sessions_course ON sessions(course_id);
-
-    CREATE TABLE IF NOT EXISTS attempts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      course_id TEXT NOT NULL,
-      question_id TEXT NOT NULL,
-      concept_id TEXT NOT NULL,
-      answer_json TEXT NOT NULL,
-      score REAL NOT NULL,
-      correct INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      UNIQUE(session_id, question_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_attempts_course ON attempts(course_id);
-  `);
-}
-
 export interface CourseRow {
   id: string;
   title: string;
   sourceType: string;
   materialText: string;
+  /** Compatibility column from the removed provider era; always "deterministic" for new rows. */
   providerUsed: string;
+  /** Compatibility column, always null for new rows. */
   providerNotice: string | null;
   qualityJson: string;
   createdAt: string;

@@ -17,7 +17,15 @@ const eslintConfig = [
     },
   },
   {
-    ignores: ["node_modules/**", ".next/**", "out/**", "tests/**", "playwright.config.ts"],
+    ignores: [
+      "node_modules/**",
+      ".next/**",
+      "out/**",
+      "tests/**",
+      "playwright.config.ts",
+      "playwright.prod-smoke.config.ts",
+      "next-env.d.ts",
+    ],
   },
 ];
 

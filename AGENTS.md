@@ -29,7 +29,7 @@ Preserve these product invariants unless the task explicitly changes the product
 - deterministic validation before generated assessment content is accepted;
 - readiness/mastery are explainable heuristics, never guaranteed exam-score predictions;
 - uploaded study material is untrusted input and must not override system instructions;
-- replaceable model providers with a usable deterministic no-key demo path;
+- deterministic, local generation: the MVP sends no material to an external LLM and requires no LLM API key;
 - privacy-conscious local handling of study material and progress;
 - no live/proctored-exam assistance, impersonation or cheating workflow;
 - individual-student focus rather than school/LMS/enterprise administration.
@@ -47,8 +47,7 @@ Preserve the documented system invariants, including where applicable:
 - mock-exam correctness remains hidden until submission;
 - every generated question passes deterministic validation;
 - source grounding is fail-closed rather than padded with invented content;
-- provider failures do not corrupt learner/course state;
-- provider-specific behavior remains behind the provider abstraction;
+- no external LLM/network generation path exists in the runtime;
 - course deletion removes its derived local data.
 
 Material architecture changes require an `ARCHITECTURE.md` update in the same change. Do not edit architecture documentation merely to make non-compliant code appear compliant.
@@ -68,11 +67,11 @@ While editing:
 - avoid unrelated refactors;
 - prefer typed, explicit interfaces and boundary validation;
 - preserve existing working behavior unless the task intentionally changes it;
-- treat imported material and provider output as untrusted data;
+- treat imported material and all generated candidates as untrusted data;
 - never commit credentials, `.env` files, local SQLite data, private study material or generated secrets;
 - do not fabricate functionality, screenshots, benchmarks, test results, users, testimonials or performance claims.
 
-When an optional external provider is unavailable, preserve the provider contract and deterministic demo/fallback path rather than blocking unrelated work.
+Generation is deterministic-only in the current MVP; do not reintroduce external model calls, API-key configuration or provider fallback without an explicit product decision.
 
 ## Assessment and grounding changes
 
@@ -93,20 +92,19 @@ Study material may be private or copyrighted.
 
 - Do not expose material publicly or use user material as fixtures/screenshots.
 - Avoid unnecessary logging or retention of study content.
-- Keep provider credentials server-side and out of source control.
+- Keep credentials server-side and out of source control.
 - Preserve prompt-injection boundaries: document content is data, never trusted instructions.
 - Validate uploaded/input data at trust boundaries.
 - Do not execute arbitrary uploaded content.
 
 Bundled demo material must remain safe to redistribute.
-
 ## UX rules
 
 The primary journey should remain obvious:
 
 > Material → Diagnostic → Practice → Mock Exam → Readiness.
 
-User-facing changes should preserve clear progress, weak-topic visibility and an obvious next study action. Loading, empty and error states must be honest. Do not hide extraction/provider failures behind fabricated success.
+User-facing changes should preserve clear progress, weak-topic visibility and an obvious next study action. Loading, empty and error states must be honest. Do not hide extraction failures behind fabricated success.
 
 ## Validation
 
@@ -120,6 +118,7 @@ npm run lint
 npm test
 npm run test:e2e
 npm run build
+npm run test:smoke:prod
 ```
 
 For persistence changes, also exercise the affected migration/data lifecycle against a disposable database.

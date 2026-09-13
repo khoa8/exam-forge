@@ -44,7 +44,7 @@ export default function CourseDashboardPage() {
 
   if (error && !overview) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-6" role="alert">
         <p className="text-red-700">{error}</p>
         <Link href="/" className="text-sm underline mt-2 inline-block">
           Back to material hub
@@ -64,7 +64,7 @@ export default function CourseDashboardPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-2xl font-bold">{course.title}</h1>
           <span className="text-xs text-slate-500">
-            {concepts.length} concepts · {overview.questionCount} questions · provider: {course.providerUsed}
+            {concepts.length} concepts · {overview.questionCount} questions
           </span>
         </div>
         <Stepper courseId={course.id} current="material" />
@@ -192,7 +192,11 @@ export default function CourseDashboardPage() {
         </section>
       )}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

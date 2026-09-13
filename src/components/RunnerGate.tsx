@@ -61,7 +61,7 @@ export function RunnerGate({ courseId, kind, sessionId, intro }: Props) {
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6 space-y-2">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-6 space-y-2" role="alert">
         <p className="text-red-700">{error}</p>
         <button onClick={() => setError(null)} className="text-sm underline">
           Try again

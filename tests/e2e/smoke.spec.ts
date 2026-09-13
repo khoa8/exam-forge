@@ -7,14 +7,10 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 async function answerCurrentQuestion(page: Page) {
+  // MCQ and true/false answers are radio groups; the first option works for both.
   const option = page.getByRole("radio").first();
   if (await option.isVisible().catch(() => false)) {
     await option.click();
-    return;
-  }
-  const tf = page.getByRole("button", { name: "True", exact: true });
-  if (await tf.isVisible().catch(() => false)) {
-    await tf.click();
     return;
   }
   const short = page.getByPlaceholder(/type the term/i);
@@ -42,7 +38,7 @@ test("bundled demo: material -> diagnostic -> practice -> mock -> readiness", as
   // 3. See grounded extracted concepts.
   await expect(page.getByRole("heading", { name: "Concepts from your material" })).toBeVisible();
   await expect(page.getByText("Encoding", { exact: false }).first()).toBeVisible();
-  await expect(page.getByText(/provider: demo/)).toBeVisible();
+  await expect(page.getByText(/\d+ concepts · \d+ questions/)).toBeVisible();
 
   // 4. Take the diagnostic quiz with immediate feedback.
   await page.getByRole("link", { name: "Diagnostic" }).click();

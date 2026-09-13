@@ -2,7 +2,7 @@ import { z } from "zod";
 
 /**
  * Zod schemas for structured generated content.
- * All provider output (demo or LLM) must pass these validators before use.
+ * All generated content must pass these validators before use.
  */
 
 export const evidenceSchema = z.object({
@@ -43,6 +43,12 @@ export const trueFalseQuestionSchema = questionBaseSchema.extend({
   type: z.literal("truefalse"),
   statement: z.string().min(8),
   correctAnswer: z.boolean(),
+  falseProof: z
+    .object({
+      sourceQuote: z.string().min(8),
+      originalSubject: z.string().min(1),
+    })
+    .optional(),
 });
 
 export const shortQuestionSchema = questionBaseSchema.extend({

@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="flex-1 mx-auto w-full max-w-5xl px-4 py-8">{children}</main>
         <footer className="border-t bg-white">
           <div className="mx-auto max-w-5xl px-4 py-4 text-xs text-slate-500 flex flex-wrap gap-x-4 justify-between">
-            <span>Your material and progress stay on this machine — nothing is uploaded without a configured LLM key.</span>
+            <span>Your material and progress stay on this machine — generation is local and deterministic, with no external AI services.</span>
             <span>Readiness scores are internal heuristic estimates, not exam predictions.</span>
           </div>
         </footer>

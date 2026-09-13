@@ -12,7 +12,7 @@ import { looksLikeInstruction } from "./provider/sanitize";
  * definition (a discrimination exercise) rather than fabricating new claims.
  */
 
-const GENERATOR = "demo:deterministic";
+const GENERATOR = "deterministic";
 
 interface DefinitionInfo {
   sentence: string;
@@ -132,6 +132,8 @@ function buildTrueFalse(
 
   if (def && swapCandidate && rand() < 0.6) {
     // False statement: another concept's definition attributed to this concept.
+    // The deterministic transformation is recorded so validation can re-derive
+    // and verify the false key instead of trusting it.
     const other = swapCandidate;
     const replaced = swapSubject(other.def.sentence, other.def.subject, concept.name);
     if (replaced) {
@@ -142,6 +144,7 @@ function buildTrueFalse(
         type: "truefalse",
         statement: replaced,
         correctAnswer: false,
+        falseProof: { sourceQuote: other.def.sentence, originalSubject: other.def.subject },
         prompt: "According to the material, is this statement true or false?",
         explanation: `This statement actually describes ${other.concept.name}, not ${concept.name}. The material states: "${def.sentence}"`,
         evidence: [{ quote: def.sentence }],
@@ -186,6 +189,31 @@ function swapSubject(sentence: string, from: string, to: string): string | null 
   return null;
 }
 
+/**
+ * Deterministic false-statement construction for true/false questions: replace
+ * one concept's subject in a validated source sentence with another concept's
+ * name. Exported so validation can re-derive the transformation and verify a
+ * false key instead of trusting it.
+ */
+export { swapSubject };
+
+/**
+ * Deterministic grading-term derivation from a validated source sentence:
+ * light-stemmed content words of the sentence, excluding the concept's own
+ * words. Shared by the demo generator and provider adapters so provider-proposed
+ * term lists can never become authoritative grading input.
+ */
+export function deriveKeyTerms(sourceSentence: string, conceptName: string): string[] {
+  const subjectWords = new Set(contentWords(conceptName).map(lightStem));
+  const terms: string[] = [];
+  for (const w of contentWords(sourceSentence).map(lightStem)) {
+    if (subjectWords.has(w)) continue;
+    if (!terms.includes(w)) terms.push(w);
+    if (terms.length >= 6) break;
+  }
+  return terms;
+}
+
 function buildShort(concept: Concept, def: DefinitionInfo): Question {
   const blanked = swapSubject(def.sentence, def.subject, "______") ?? def.sentence;
   const accepted = Array.from(new Set([def.subject, def.subject.replace(/^(the|a|an)\s+/i, "")]));
@@ -207,13 +235,7 @@ function buildShort(concept: Concept, def: DefinitionInfo): Question {
 function buildExplanation(concept: Concept, def: DefinitionInfo | null, keySentence: string | null): Question | null {
   const source = def?.sentence ?? keySentence;
   if (!source) return null;
-  const subjectWords = new Set(contentWords(concept.name).map(lightStem));
-  const terms: string[] = [];
-  for (const w of contentWords(source).map(lightStem)) {
-    if (subjectWords.has(w)) continue;
-    if (!terms.includes(w)) terms.push(w);
-    if (terms.length >= 6) break;
-  }
+  const terms = deriveKeyTerms(source, concept.name);
   if (terms.length < 2) return null;
   return {
     id: `q_${randomId()}`,

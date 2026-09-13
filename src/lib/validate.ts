@@ -1,11 +1,29 @@
 import type { Concept, Question } from "./types";
-import { normAnswer, normText, wordSimilarity } from "./util";
-import { quoteIsGrounded } from "./extract";
+import { contentWords, lightStem, normAnswer, normText, wordSimilarity } from "./util";
+import { isSourceSpan, quoteIsGrounded } from "./extract";
+import { looksLikeInstruction } from "./provider/sanitize";
+import { swapSubject } from "./generate";
+import { validateQuestion as parseQuestionSchema } from "./schemas";
 
 /**
  * Deterministic validation gates applied to every generated question before it is
- * accepted, regardless of provider. Invalid or low-quality questions are dropped,
- * never silently fixed.
+ * accepted. Invalid or low-quality questions are dropped, never silently fixed.
+ *
+ * Trust-boundary contract (enforced here, on the real acceptance path):
+ *  1. Canonical runtime schemas — every candidate is parsed with the zod schemas
+ *     before any semantic gate; TypeScript types are not validation.
+ *  2. Evidence grounding — every evidence quote is an exact, token-bounded,
+ *     normalized span of the source, and never instruction-like content.
+ *  3. Evidence/concept-scoped answer provenance — answer-bearing fields must be
+ *     supported by the CURRENT question's evidence and its concept's validated
+ *     evidence/description, not merely by occurring somewhere in the source.
+ *  4. True/false keys — true statements must be verbatim in the scoped evidence;
+ *     false statements require a deterministic, re-derivable proof of the false
+ *     transformation (falseProof); absence of verbatim text never proves false.
+ *  5. Learner-facing explanations must quote grounded source evidence.
+ *
+ * Unsupported candidates are dropped, never repaired; if too few questions
+ * survive, course creation fails honestly instead of padding with filler.
  */
 
 export interface ValidationIssue {
@@ -19,6 +37,52 @@ export interface ValidationResult {
   duplicatesRemoved: number;
 }
 
+/**
+ * Provenance model (per-field, no union laundering):
+ *
+ *   Concept    name --> description        (name must be a token-bounded span)
+ *              name --> each evidence      (each must support the concept alone)
+ *   Question   conceptId --> evidence      (evidence must belong to the concept)
+ *              evidence --> answer fields  (answers proven from question-local
+ *                                           evidence only)
+ *
+ * Every provenance edge must be valid on its own: a valid sibling field can
+ * never make a cross-wired field acceptable, and source-global occurrence is
+ * not provenance.
+ */
+
+/** The question's own validated evidence — the only provenance basis for answers. */
+function questionEvidenceText(q: Question): string {
+  return q.evidence
+    .map((ev) => ev.quote)
+    .filter((p) => p && p.trim().length > 0)
+    .join("\n");
+}
+
+/**
+ * Deterministic concept relationship for a question evidence quote: it belongs
+ * to the concept when it is (a) derived from the concept's validated
+ * description/evidence, or (b) itself names the concept. A quote about another
+ * concept that merely exists in the same document supports nothing.
+ */
+function evidenceSupportsConcept(quote: string, concept: Concept): boolean {
+  if (isSourceSpan(quote, concept.name)) return true;
+  if (isSourceSpan(concept.description, quote)) return true;
+  for (const ev of concept.evidence) {
+    if (isSourceSpan(ev.quote, quote)) return true;
+  }
+  return false;
+}
+
+/** Every key term driving coverage grading must be derivable from the given provenance text. */
+function keyTermSupported(scope: string, term: string): boolean {
+  if (isSourceSpan(scope, term)) return true;
+  const scopeStems = new Set(contentWords(scope).map(lightStem));
+  const words = contentWords(term);
+  if (words.length === 0) return false;
+  return words.every((w) => scopeStems.has(lightStem(w)));
+}
+
 export function validateQuestion(q: Question, sourceText: string, concepts: Concept[]): string[] {
   const errors: string[] = [];
 
@@ -27,16 +91,45 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
   if (!q.explanation || normText(q.explanation).length < 10) errors.push("explanation missing or too short");
   if (!q.evidence || q.evidence.length === 0) errors.push("no source evidence");
 
-  // Grounding: every evidence quote must actually exist in the source material.
-  for (const ev of q.evidence) {
+  // Grounding + instruction filtering: every evidence quote must exist verbatim in
+  // the source and must not be instruction-like untrusted content.
+  for (const ev of q.evidence ?? []) {
+    if (looksLikeInstruction(ev.quote)) {
+      errors.push("evidence quote is instruction-like content");
+      break;
+    }
     if (!quoteIsGrounded(sourceText, ev.quote)) {
       errors.push(`evidence quote not found in source material: "${ev.quote.slice(0, 60)}…"`);
       break;
     }
   }
 
+  // Provenance: the learner-facing explanation must quote grounded source text.
+  // Free-form prose that never quotes the material is not acceptable feedback.
+  if (q.evidence && q.evidence.length > 0 && q.explanation) {
+    const normExplanation = normText(q.explanation);
+    const anchored = q.evidence.some((ev) => normExplanation.includes(normText(ev.quote)));
+    if (!anchored) errors.push("explanation does not quote grounded source evidence");
+  }
+
   const concept = concepts.find((c) => c.id === q.conceptId);
   if (!concept) errors.push(`unknown conceptId ${q.conceptId}`);
+
+  // Question evidence must belong to the current concept: a real sentence about
+  // another concept is not evidence for this question, even though it exists in
+  // the same source document.
+  if (concept) {
+    for (const ev of q.evidence ?? []) {
+      if (!evidenceSupportsConcept(ev.quote, concept)) {
+        errors.push("question evidence does not belong to the question's concept");
+        break;
+      }
+    }
+  }
+
+  // Answer-bearing fields are proven from the question's OWN validated evidence
+  // (now concept-aligned) — never from a union that could launder cross-wiring.
+  const evidenceText = questionEvidenceText(q);
 
   switch (q.type) {
     case "mcq": {
@@ -53,14 +146,50 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
           break;
         }
       }
+      // Provenance: the correct answer must be a token-bounded span of the
+      // question's own validated, concept-aligned evidence.
+      if (correctText && !isSourceSpan(evidenceText, correctText)) {
+        errors.push("correct answer text is not grounded in the question's validated evidence");
+      }
       break;
     }
     case "truefalse": {
       if (!q.statement || normText(q.statement).length < 12) errors.push("statement too short");
       if (typeof q.correctAnswer !== "boolean") errors.push("correctAnswer must be boolean");
-      if (!quoteIsGrounded(sourceText, q.statement) && q.correctAnswer) {
-        // A "true" statement must be verbatim from the source.
-        errors.push("true statement is not grounded in the source");
+      if (q.statement && looksLikeInstruction(q.statement)) {
+        errors.push("statement is instruction-like content");
+        break;
+      }
+      if (q.correctAnswer === true) {
+        // A "true" statement must be verbatim from the source AND supported by
+        // the question's own concept-aligned evidence.
+        if (!quoteIsGrounded(sourceText, q.statement)) {
+          errors.push("true statement is not grounded in the source");
+        } else if (!isSourceSpan(evidenceText, q.statement)) {
+          errors.push("true statement is not supported by the question's validated evidence");
+        }
+      } else if (q.correctAnswer === false) {
+        // A statement is not proven false merely because it is absent verbatim.
+        // False keys require a deterministic, re-derivable transformation proof.
+        if (!q.falseProof) {
+          errors.push("false statement has no deterministic proof of the false transformation");
+          break;
+        }
+        const proofQuote = q.falseProof.sourceQuote;
+        if (looksLikeInstruction(proofQuote) || !quoteIsGrounded(sourceText, proofQuote)) {
+          errors.push("false statement proof quote is not grounded in the source");
+          break;
+        }
+        const rederived = swapSubject(proofQuote, q.falseProof.originalSubject, concept?.name ?? "");
+        if (!rederived || normText(rederived) !== normText(q.statement)) {
+          errors.push("false statement does not match its deterministic transformation proof");
+          break;
+        }
+        if (quoteIsGrounded(sourceText, q.statement)) {
+          // The transformed statement exists verbatim in the source, so the
+          // material itself supports it as true — the key would contradict it.
+          errors.push("false statement is verbatim in the source, contradicting the answer key");
+        }
       }
       break;
     }
@@ -68,11 +197,38 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
       if (!q.acceptedAnswers || q.acceptedAnswers.length === 0) errors.push("no accepted answers");
       if (q.acceptedAnswers.some((a) => normAnswer(a).length === 0)) errors.push("empty accepted answer");
       if (!q.modelAnswer || normAnswer(q.modelAnswer).length === 0) errors.push("model answer missing");
+      // Provenance: graded answers must be token-bounded spans of the question's
+      // own validated, concept-aligned evidence — unrelated terms from elsewhere
+      // in the document (or from the concept's other fields) are rejected.
+      if (q.modelAnswer && normAnswer(q.modelAnswer).length > 0 && !isSourceSpan(evidenceText, q.modelAnswer)) {
+        errors.push("model answer is not grounded in the question's validated evidence");
+      }
+      if (q.acceptedAnswers) {
+        for (const a of q.acceptedAnswers) {
+          if (normAnswer(a).length > 0 && !isSourceSpan(evidenceText, a)) {
+            errors.push(`accepted answer not grounded in the question's validated evidence: "${a.slice(0, 50)}"`);
+            break;
+          }
+        }
+      }
       break;
     }
     case "explanation": {
       if (!q.keyTerms || q.keyTerms.length < 2) errors.push("not enough key terms for grading");
       if (!q.modelAnswer || normText(q.modelAnswer).length < 10) errors.push("model answer missing");
+      // Provenance: the model answer and every grading term must be supported by
+      // the question's own validated, concept-aligned evidence.
+      if (q.modelAnswer && normText(q.modelAnswer).length >= 10 && !isSourceSpan(evidenceText, q.modelAnswer)) {
+        errors.push("model answer is not grounded in the question's validated evidence");
+      }
+      if (q.keyTerms && q.keyTerms.length > 0) {
+        for (const t of q.keyTerms) {
+          if (!keyTermSupported(evidenceText, t)) {
+            errors.push(`key term not grounded in the question's validated evidence: "${t.slice(0, 50)}"`);
+            break;
+          }
+        }
+      }
       break;
     }
   }
@@ -97,7 +253,15 @@ export function validateQuestionSet(
       continue;
     }
 
-    const errors = validateQuestion(q, sourceText, concepts);
+    // Canonical runtime schema gate: a typed object is not validation. Candidates
+    // that violate the canonical schemas never reach the semantic gates.
+    const schemaParsed = parseQuestionSchema(q);
+    if (!schemaParsed.ok) {
+      rejected.push({ questionId: q.id, errors: ["schema validation failed", ...schemaParsed.errors] });
+      continue;
+    }
+
+    const errors = validateQuestion(schemaParsed.question, sourceText, concepts);
     if (errors.length > 0) {
       rejected.push({ questionId: q.id, errors });
       continue;
@@ -141,4 +305,57 @@ export function validateQuestionSet(
   }
 
   return { accepted, rejected, duplicatesRemoved };
+}
+
+/**
+ * Concept-level trust boundary, shared by all providers: a concept is acceptable
+ * only when its name, description and evidence are grounded, non-instruction
+ * source content AND every provenance-bearing field independently supports the
+ * concept (the name is a token-bounded span of the description and of each
+ * evidence quote). One correct field can never launder a cross-wired sibling.
+ */
+export function validateConceptProvenance(concept: Concept, sourceText: string): string[] {
+  const errors: string[] = [];
+  const name = concept.name?.trim() ?? "";
+  const description = concept.description?.trim() ?? "";
+
+  if (!name || name.length < 2) errors.push("concept name missing");
+  if (!description || description.length < 10) errors.push("concept description missing or too short");
+  if (!concept.evidence || concept.evidence.length === 0) errors.push("concept has no evidence");
+
+  if (name && looksLikeInstruction(name)) errors.push("concept name is instruction-like content");
+  if (description && looksLikeInstruction(description)) errors.push("concept description is instruction-like content");
+  for (const ev of concept.evidence ?? []) {
+    if (looksLikeInstruction(ev.quote)) {
+      errors.push("concept evidence is instruction-like content");
+      break;
+    }
+  }
+
+  if (name && !isSourceSpan(sourceText, name)) {
+    errors.push("concept name not found in source material");
+  }
+  if (description && !quoteIsGrounded(sourceText, description)) {
+    errors.push("concept description not found in source material");
+  }
+  for (const ev of concept.evidence ?? []) {
+    if (!quoteIsGrounded(sourceText, ev.quote)) {
+      errors.push("concept evidence quote not found in source material");
+      break;
+    }
+  }
+
+  // Independent per-field alignment: the description and each evidence quote
+  // must each support the concept on its own.
+  if (name && description && !isSourceSpan(description, name)) {
+    errors.push("concept description does not support the concept name");
+  }
+  for (const ev of concept.evidence ?? []) {
+    if (name && !isSourceSpan(ev.quote, name)) {
+      errors.push("concept evidence does not support the concept name");
+      break;
+    }
+  }
+
+  return errors;
 }

@@ -35,14 +35,16 @@ The product should always help answer: **What should I study next, and why?**
 
 ## Current capabilities
 
+ExamForge generates assessment content deterministically from the user's material. The
+current MVP does not send material to an external LLM and does not require an LLM API key.
+
 ExamForge currently supports:
 
 - bundled redistributable demo material;
 - pasted text / Markdown;
 - text-based PDF ingestion with honest extraction-quality/failure messaging;
 - multiple choice, true/false, short-answer and explanation questions;
-- deterministic concept/question generation in no-key demo mode;
-- optional provider-backed generation behind the same provider abstraction;
+- deterministic, local concept/question/answer-key generation (the only generation path);
 - diagnostic, targeted-practice and mock-exam sessions;
 - grounded feedback and source evidence;
 - explainable mastery/readiness heuristics and simple review hints;
@@ -62,7 +64,7 @@ Product directions that remain compatible with the contract include, when justif
 - course portability/import-export and multi-document support;
 - broader ingestion quality, OCR and multilingual support;
 - accessibility and browser-flow hardening;
-- improved provider verification and generation progress UX.
+- generation progress and ingestion UX hardening.
 
 A planned feature is not considered part of current product behavior until implemented and verified.
 
@@ -102,7 +104,7 @@ validation strategy and user-visible explanation.
 ## Honesty rules
 
 - Readiness must be labeled as an internal heuristic estimate, never a prediction of the user's real exam score.
-- Extraction/provider quality and failures must be surfaced honestly.
+- Extraction quality and failures must be surfaced honestly.
 - Empty/insufficient material states should explain the limitation rather than fabricate content.
 - Mock exams must not claim to match a real exam unless the user supplied an appropriate blueprint and the product clearly communicates the limitation.
 - Do not fabricate learning-effectiveness claims, score improvements, testimonials or retention metrics.
@@ -110,7 +112,7 @@ validation strategy and user-visible explanation.
 ## Integrity and safety
 
 - Study material is untrusted data and must not override system instructions.
-- Provider/model output must be validated before accepted assessment content reaches the learner.
+- All generated assessment content must pass deterministic validation before it reaches the learner.
 - ExamForge supports preparation and practice, not live graded/proctored exam assistance.
 - Do not build impersonation, proctoring bypass, or covert real-time answer-delivery workflows.
 
@@ -120,7 +122,11 @@ Study material may be private or copyrighted.
 
 - Avoid unnecessary retention or logging of study content.
 - Do not publish or reuse private user material as demos/fixtures.
-- Disclose when configured external providers receive material.
+- Generation is local and deterministic: the current app does not send study material to
+  external AI services. Reintroducing any external AI processing would require a new
+  explicit product decision with correctness/privacy validation.
+- The application is local-first: servers bind to loopback (127.0.0.1) by default, so
+  material and progress are not reachable from other machines.
 - Preserve clear delete/clear behavior for locally stored course data.
 - Bundled demo material must be safe to redistribute.
 

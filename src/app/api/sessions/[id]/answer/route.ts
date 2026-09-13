@@ -7,8 +7,14 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // Request parsing boundary: malformed client JSON is a 4xx, not a server error.
+  let body: { questionId?: string; answer?: unknown };
   try {
-    const body = (await req.json()) as { questionId?: string; answer?: unknown };
+    body = (await req.json()) as { questionId?: string; answer?: unknown };
+  } catch {
+    return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+  }
+  try {
     if (!body.questionId) {
       return NextResponse.json({ error: "questionId is required" }, { status: 400 });
     }

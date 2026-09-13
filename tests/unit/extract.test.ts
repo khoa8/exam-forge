@@ -1,6 +1,51 @@
 import { describe, expect, it } from "vitest";
-import { extractConcepts, extractTitle, quoteIsGrounded, splitSections } from "@/lib/extract";
+import { extractConcepts, extractTitle, isSourceSpan, quoteIsGrounded, splitSections } from "@/lib/extract";
 import { SAMPLE_MATERIAL } from "@/sample/material";
+
+const SOURCE =
+  "Photosynthesis is the process by which plants convert light energy into chemical energy. Chlorophyll is the green pigment that absorbs light in plant leaves.";
+
+describe("quote grounding contract (exact containment)", () => {
+  it("accepts an exact source quote", () => {
+    expect(quoteIsGrounded(SOURCE, "Photosynthesis is the process by which plants convert light energy into chemical energy.")).toBe(true);
+  });
+
+  it("accepts a legitimate shorter contiguous quote", () => {
+    expect(quoteIsGrounded(SOURCE, "Chlorophyll is the green pigment that absorbs light in plant leaves")).toBe(true);
+    expect(quoteIsGrounded(SOURCE, "plants convert light energy into chemical energy")).toBe(true);
+  });
+
+  it("rejects a real prefix followed by a fabricated suffix (F-01 class)", () => {
+    // First six words are real; the continuation is fabricated.
+    expect(
+      quoteIsGrounded(SOURCE, "Photosynthesis is the process by which aliens invented chemistry."),
+    ).toBe(false);
+    expect(
+      quoteIsGrounded(SOURCE, "Photosynthesis is the process by which plants convert light energy into sound waves."),
+    ).toBe(false);
+  });
+
+  it("rejects an unrelated quote", () => {
+    expect(quoteIsGrounded(SOURCE, "Cellular respiration releases energy stored in glucose bonds.")).toBe(false);
+  });
+
+  it("rejects quotes that are too short to be evidence", () => {
+    expect(quoteIsGrounded(SOURCE, "light")).toBe(false);
+  });
+
+  it("tolerates whitespace and case differences via normalization", () => {
+    expect(
+      quoteIsGrounded(SOURCE, "Photosynthesis   is the process\nby which plants convert LIGHT energy into chemical energy."),
+    ).toBe(true);
+  });
+
+  it("supports answer-span containment via isSourceSpan", () => {
+    expect(isSourceSpan(SOURCE, "chlorophyll")).toBe(true);
+    expect(isSourceSpan(SOURCE, "green pigment")).toBe(true);
+    expect(isSourceSpan(SOURCE, "aliens invented chemistry")).toBe(false);
+    expect(isSourceSpan(SOURCE, "ab")).toBe(false);
+  });
+});
 
 describe("concept extraction", () => {
   it("extracts the main concepts from the bundled sample", () => {
