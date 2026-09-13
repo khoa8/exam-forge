@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ingestPdf, ingestText } from "@/lib/ingest";
+import { createCourseBodySchema } from "@/lib/schemas";
 import { createCourse, MaterialNotViableError } from "@/lib/service";
 import { SAMPLE_MATERIAL, SAMPLE_MATERIAL_TITLE } from "@/sample/material";
 import { db } from "@/lib/db";
@@ -30,9 +31,20 @@ export async function POST(req: NextRequest) {
     let warnings: string[] = [];
 
     if (contentType.includes("multipart/form-data")) {
-      const form = await req.formData();
+      // Multipart parsing boundary: a body that does not match its content type
+      // is a client error, not a server fault.
+      let form: FormData;
+      try {
+        form = await req.formData();
+      } catch {
+        return NextResponse.json({ error: "Request body must be valid multipart form data." }, { status: 400 });
+      }
+      const titleEntry = form.get("title");
+      if (titleEntry !== null && typeof titleEntry !== "string") {
+        return NextResponse.json({ error: "Invalid multipart field: 'title' must be a string." }, { status: 400 });
+      }
+      title = titleEntry || undefined;
       const file = form.get("file");
-      title = (form.get("title") as string) || undefined;
       if (!(file instanceof File)) {
         return NextResponse.json({ error: "No PDF file provided." }, { status: 400 });
       }
@@ -47,19 +59,28 @@ export async function POST(req: NextRequest) {
       if (!title) title = file.name.replace(/\.pdf$/i, "");
     } else {
       // Request parsing boundary: malformed client JSON is a 4xx, not a server error.
-      let body: { sample?: boolean; text?: string; title?: string };
+      let body: unknown;
       try {
-        body = (await req.json()) as { sample?: boolean; text?: string; title?: string };
+        body = await req.json();
       } catch {
         return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
       }
-      if (body.sample) {
+      // Shape/type validation boundary: a syntactically valid body with the wrong
+      // root shape or field types is rejected before any field access or coercion.
+      const parsed = createCourseBodySchema.safeParse(body);
+      if (!parsed.success) {
+        return NextResponse.json(
+          { error: "Invalid request body: expected an object with optional 'sample' (boolean), 'text' (string) and 'title' (string)." },
+          { status: 400 },
+        );
+      }
+      if (parsed.data.sample) {
         text = SAMPLE_MATERIAL;
         sourceType = "bundled";
-        title = title || SAMPLE_MATERIAL_TITLE;
+        title = SAMPLE_MATERIAL_TITLE;
       } else {
-        text = (body.text ?? "").toString();
-        title = body.title || undefined;
+        text = parsed.data.text ?? "";
+        title = parsed.data.title || undefined;
       }
     }
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Zod schemas for structured generated content.
+ * Zod schemas for structured generated content and client request bodies.
  * All generated content must pass these validators before use.
  */
 
@@ -92,3 +92,25 @@ export function validateQuestion(raw: unknown):
   if (parsed.success) return { ok: true, question: parsed.data as import("./types").Question };
   return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) };
 }
+
+/**
+ * Client request-body schemas: the runtime trust boundary in front of the API
+ * routes. Syntactically valid JSON with a wrong root shape or field type is
+ * rejected here, before any field access, coercion or service call. Unknown
+ * keys are ignored (Zod default) to preserve forward compatibility.
+ */
+export const createCourseBodySchema = z.object({
+  sample: z.boolean().optional(),
+  text: z.string().optional(),
+  title: z.string().optional(),
+});
+
+export const startSessionBodySchema = z.object({
+  kind: z.enum(["diagnostic", "practice", "mock"]),
+  conceptId: z.string().optional(),
+});
+
+export const submitAnswerBodySchema = z.object({
+  questionId: z.string().min(1),
+  answer: answerValueSchema,
+});
