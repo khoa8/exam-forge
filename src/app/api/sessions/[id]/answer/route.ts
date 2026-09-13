@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { answerQuestion } from "@/lib/service";
-import { answerValueSchema } from "@/lib/schemas";
+import { submitAnswerBodySchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,21 +8,23 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   // Request parsing boundary: malformed client JSON is a 4xx, not a server error.
-  let body: { questionId?: string; answer?: unknown };
+  let body: unknown;
   try {
-    body = (await req.json()) as { questionId?: string; answer?: unknown };
+    body = await req.json();
   } catch {
     return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
   }
+  // Shape/type validation boundary (canonical answerValueSchema included):
+  // reject wrong root shape or field types before any service call.
+  const parsed = submitAnswerBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request body: expected string 'questionId' and a valid 'answer'." },
+      { status: 400 },
+    );
+  }
   try {
-    if (!body.questionId) {
-      return NextResponse.json({ error: "questionId is required" }, { status: 400 });
-    }
-    const parsedAnswer = answerValueSchema.safeParse(body.answer);
-    if (!parsedAnswer.success) {
-      return NextResponse.json({ error: "Invalid answer format" }, { status: 400 });
-    }
-    const result = answerQuestion(id, body.questionId, parsedAnswer.data);
+    const result = answerQuestion(id, parsed.data.questionId, parsed.data.answer);
     return NextResponse.json(result);
   } catch (err) {
     const name = (err as Error).name;

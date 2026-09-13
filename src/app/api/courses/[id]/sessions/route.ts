@@ -1,19 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
+import { startSessionBodySchema } from "@/lib/schemas";
 import { getSessionView, startSession } from "@/lib/service";
-import type { SessionKind } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // Request parsing boundary: malformed client JSON is a 4xx, not a server error.
+  let body: unknown;
   try {
-    const body = (await req.json().catch(() => ({}))) as { kind?: string; conceptId?: string };
-    const kind = body.kind as SessionKind;
-    if (!["diagnostic", "practice", "mock"].includes(kind)) {
-      return NextResponse.json({ error: "kind must be diagnostic, practice or mock" }, { status: 400 });
-    }
-    const session = startSession(id, kind, body.conceptId);
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
+  }
+  // Shape/type validation boundary: reject wrong root shape or field types
+  // before any service call.
+  const parsed = startSessionBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request body: expected 'kind' (diagnostic, practice or mock) and optional string 'conceptId'." },
+      { status: 400 },
+    );
+  }
+  try {
+    const session = startSession(id, parsed.data.kind, parsed.data.conceptId);
     const view = getSessionView(session.id);
     return NextResponse.json(view, { status: 201 });
   } catch (err) {
