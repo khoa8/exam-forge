@@ -25,11 +25,11 @@ src/
 │   ├── service.ts      # Orchestration: courses, sessions, answers, views
 │   ├── util.ts         # Seeded RNG, normalization, similarity metrics
 │   └── provider/
-│       ├── index.ts    # MaterialProvider interface + ProviderError
-│       ├── demo.ts     # Deterministic demo provider (no key, no network)
-│       ├── glm.ts      # Optional GLM adapter (OpenAI-compatible HTTP)
-│       ├── registry.ts # Provider selection + automatic fallback
-│       └── sanitize.ts # Prompt-injection detection, filtering, untrusted wrapping
+│       ├── deterministic.ts # The only generation path: deterministic concept +
+│       │                    #   question generation from the material (no model,
+│       │                    #   no network, no API key)
+│       └── sanitize.ts      # Untrusted-material filtering: instruction-like
+│                            #   content detection for extraction/validation
 ├── app/                # Next.js routes (pages + REST API under /api)
 ├── components/         # Stepper, MasteryBar, SessionRunner, RunnerGate
 └── sample/material.ts  # Bundled original demo material
@@ -41,7 +41,7 @@ src/
 material text
    │ ingest.ts (normalize / PDF extract / quality warnings)
    ▼
-provider.generate()                      ── demo.ts (deterministic) or glm.ts (LLM)
+deterministic generation (provider/deterministic.ts)
    │ extract concepts → generate questions → validate (schemas + grounding + duplicates)
    ▼
 db.insertCourse()  (courses, concepts, questions)
@@ -72,8 +72,8 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    through `validateQuestionSet`, which first parses it against the canonical zod
    schemas (runtime validation, not TypeScript casts) and then applies the semantic
    gates: exactly-one-correct-option, option-id/text uniqueness, near-duplicate prompts,
-   and an ambiguity guard (correct answer ≈ distractor). Both providers pass through the
-   same boundary; concepts are gated by `validateConcept` plus `validateConceptProvenance`.
+   and an ambiguity guard (correct answer ≈ distractor). Concepts are gated by
+   `validateConcept` plus `validateConceptProvenance`.
 5. **Exact grounding and per-field provenance (deterministic, fail-closed)** —
    `extract.ts::quoteIsGrounded` accepts an evidence quote only when its normalized form
    is a token-bounded contiguous span of the normalized source; there is no prefix/partial
@@ -90,22 +90,21 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    true, short accepted/model answers, explanation model answers and grading terms — are
    proven from the question's own validated, concept-aligned evidence only, never from a
    union with concept fields. A statement keyed false is never proven false by mere
-   absence of verbatim text: untrusted provider false candidates are dropped, and the demo
-   generator's false statements carry a `falseProof` (source sentence + replaced subject)
-   that validation re-derives to verify the transformation. A concept without grounded,
-   non-instruction, independently-supporting description/evidence content is dropped; no
-   synthetic filler is created. Learner-facing explanations quote the question's validated
-   evidence; the GLM adapter constructs prompts, explanations and grading terms
-   deterministically from validated content and requires every distractor to be a
-   verbatim source span, so model-written factual prose never reaches the learner.
-   Unsupported candidates are dropped, never repaired; if fewer than 3 questions survive,
-   the provider falls back or fails per the provider-mode contract (tested).
+   absence of verbatim text: false candidates without a deterministic `falseProof`
+   (source sentence + replaced subject) that validation re-derives are rejected. A
+   concept without grounded, non-instruction, independently-supporting
+   description/evidence content is dropped; no synthetic filler is created. Learner-facing
+   explanations quote the question's validated evidence. Unsupported candidates are
+   dropped, never repaired; if fewer than 3 questions survive, course creation fails
+   honestly instead of padding with filler (tested).
 6. **Injection-filtered extraction** — instruction-like content can never become a
    concept candidate via headings, bold terms, definition sentences or repeated
-   capitalized phrases, and instruction-like provider-supplied fields are rejected at the
+   capitalized phrases, and instruction-like candidate fields are rejected at the
    trust boundary (tested with injected fixtures).
-7. **Provider independence** — the GLM adapter can fail arbitrarily; the registry falls
-   back to the demo provider with a visible notice when the mode allows fallback (tested).
+7. **Deterministic-only generation** — there is exactly one generation path
+   (`provider/deterministic.ts`); no external LLM, network call, API-key configuration
+   or provider fallback exists in the runtime. Stale provider environment variables are
+   inert, and generation makes no outbound requests (tested).
 
 ## Persistence
 
@@ -131,36 +130,44 @@ production entrypoints (`npm run dev`, `npm start`) bind the HTTP server to loop
 (`127.0.0.1`) by default. The app is not reachable from other machines unless a user
 deliberately overrides the host. There is no account/auth subsystem; the loopback default
 plus local SQLite is the privacy boundary. `/api/health` returns only `{ ok: true }` — no
-local paths, provider configuration details or material-derived data.
+local paths or material-derived data.
 
-## Provider abstraction
+## Deterministic generation
 
-`MaterialProvider.generate(text, sourceType) → ProviderOutput`. Selection order:
-`EXAMFORGE_PROVIDER=glm|demo|auto` (auto = GLM if a key exists, else demo; any other
-value is rejected with an actionable error). Forced `glm` is an explicit contract: when
-GLM is unavailable, misconfigured, or its output is rejected, the request fails loudly
-instead of silently substituting demo content; `auto` treats GLM as best-effort and falls
-back to the demo provider with a visible notice. Provider configuration (base URL, model,
-timeout) is validated when the adapter is actually used, with errors that name the
-offending environment variable and never include the key — so a misconfigured optional
-provider degrades to the demo path with an honest notice instead of blocking the no-key
-flow. GLM output is parsed from a JSON block, remapped (concepts, answers and
-explanations provenance-checked per the key invariants above), validated with the same
-gates as demo output, and rejected (→ fallback in `auto`, error in forced `glm`) if fewer
-than 3 grounded concepts/questions survive.
+Generation is deterministic and local — the MVP has **no external LLM runtime path, no
+API-key configuration and no provider fallback**. `provider/deterministic.ts` exposes one
+synchronous entry point, `generateDeterministic(text) → ProviderOutput`, which runs
+extraction → question generation → canonical validation in-process. The same input always
+produces the same output.
+
+The `provider/` module boundary survives not as a provider framework (there is no
+interface, registry, mode selection or fallback) but because it keeps the two
+generation-adjacent trust concerns in one place: the deterministic generator itself, and
+`sanitize.ts`'s instruction-like content filtering, which protects extraction and
+validation from untrusted material regardless of how generation is implemented.
+
+Answer-key authority is fully system-owned: every persisted answer key is produced by
+deterministic source-grounded generation logic and passes the validation gates above.
+There is no code path in which an external model chooses an answer key.
+
+The `provider_used` / `provider_notice` columns remain in the `courses` table for schema
+compatibility; new courses record `provider_used = "deterministic"` and a null notice, and
+no domain type or UI surface reads them.
 
 ## Testing strategy
 
 - **Unit** (`tests/unit`): extraction, schemas, validation gates, grading, mastery,
-  readiness, sampling, ingestion (incl. generated PDF fixtures), injection, provider
-  fallback, provider provenance (local HTTP stub for the GLM adapter).
+  readiness, sampling, ingestion (incl. generated PDF fixtures), injection, and the
+  deterministic-only generation contract (stale provider env vars are inert; generation
+  makes no network requests; output is deterministic and schema-valid).
 - **Integration** (`tests/integration`): full bundled-demo flow over the real service
   layer + scratch SQLite file — diagnostic → weak topics → practice → mock → readiness →
   persistence, plus lock/consistency rules.
 - **E2E** (`tests/e2e`): the bundled-demo journey through the real UI with Playwright
   against a loopback-only dev server on a dedicated port, using a disposable SQLite
-  database (temp dir via `EXAMFORGE_DB_PATH`) and the pinned demo provider; servers are
-  never reused and real learner data is never touched. A separate production smoke suite
+  database (temp dir via `EXAMFORGE_DB_PATH`); generation is deterministic and local, so
+  no keys or network are involved. Servers are never reused and real learner data is
+  never touched. A separate production smoke suite
   (`playwright.prod-smoke.config.ts`, `npm run test:smoke:prod`) verifies the production
   build/start path with the same isolation rules.
 

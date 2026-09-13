@@ -36,7 +36,7 @@ Try it end-to-end: take the diagnostic → see weak topics → practice one → 
 exam → check the readiness dashboard. Your progress persists locally in SQLite
 (`.data/examforge.sqlite`).
 
-## What you get (no LLM key, no network)
+## What you get (no setup, no network)
 
 | Step | What happens |
 | --- | --- |
@@ -60,25 +60,6 @@ exam → check the readiness dashboard. Your progress persists locally in SQLite
   comes up empty
 - ❌ Slides with heavy layouts may extract poorly (quality notes appear when they do)
 
-## Optional: GLM provider
-
-ExamForge ships with a deterministic demo provider. A GLM adapter (OpenAI-compatible) is
-available behind the same interface:
-
-```bash
-cp .env.example .env.local
-# set EXAMFORGE_LLM_API_KEY, optionally EXAMFORGE_PROVIDER=glm
-```
-
-By default (`EXAMFORGE_PROVIDER=auto`), the adapter is used only when a key is configured;
-if the LLM call fails, is misconfigured, or its output doesn't pass validation, ExamForge
-falls back to the demo provider and says so. Setting `EXAMFORGE_PROVIDER=glm` forces the
-LLM path — failures then surface as clear errors instead of falling back. Provider
-configuration errors name the offending environment variable (the API key is never
-included). All generated content — from any provider — must pass the same deterministic
-validation (canonical schemas, evidence-scoped answer provenance, exact grounding quotes,
-instruction filtering, duplicate removal) before it reaches you.
-
 ## Scripts
 
 ```bash
@@ -95,24 +76,24 @@ npm run db:reset         # delete local progress data
 
 Browser tests never touch your local course data: `test:e2e` and `test:smoke:prod` start
 their own server on a dedicated port with a disposable SQLite database in a temp
-directory, pinned to the deterministic demo provider.
+directory.
 
 ## Privacy
 
-- Material and progress never leave your machine unless you configure an LLM key.
-- Servers bind to loopback (`127.0.0.1`) by default in both `npm run dev` and `npm start`.
+- Generation is local and deterministic: your material is never sent to an external AI
+  service, and no API key or external generation service exists in the current app.
+- Servers bind to loopback (`127.0.0.1`) by default in both `npm run dev` and `npm start`,
+  so material and progress remain local to ExamForge's process/storage during normal use.
 - Deleting a course removes its material, concepts, questions, and progress.
 - Readiness/mastery numbers are internal study heuristics, not predictions.
 
 ## Limitations
 
-- The demo provider is pattern-based: material without clear definition sentences yields
-  fewer questions (it will not invent filler).
+- Generation is pattern-based: material without clear definition sentences yields fewer
+  questions (it will not invent filler).
 - Readiness is a heuristic over this app's answers only — it is not a real exam prediction.
 - No OCR, no multi-user accounts (single local learner), no scheduling beyond simple
   review hints.
-- The GLM adapter is implemented and covered by automated mapping/failure/fallback tests,
-  but it has not been verified against a live paid endpoint and is off by default.
 
 See [PRODUCT.md](PRODUCT.md) for the product contract and [ARCHITECTURE.md](ARCHITECTURE.md)
 for the technical design and system invariants.
