@@ -237,6 +237,44 @@ describe("answer provenance gates (F-02 class)", () => {
     expect(result.rejected).toHaveLength(0);
   });
 
+  it("rejects a short question whose prompt visibly contains an accepted or model answer", () => {
+    const leaked: Question = {
+      id: "q_short_leaked",
+      conceptId: "c2",
+      conceptName: "Chlorophyll",
+      type: "short",
+      prompt: 'Fill in the blank according to the material:\n\n"Chlorophyll is the green pigment that absorbs light in plant leaves."\n\nWhich term does the blank represent?',
+      modelAnswer: "Chlorophyll",
+      acceptedAnswers: ["Chlorophyll"],
+      explanation: 'The material states: "Chlorophyll is the green pigment that absorbs light in plant leaves."',
+      evidence: [{ quote: "Chlorophyll is the green pigment that absorbs light in plant leaves." }],
+      difficulty: "medium",
+      generator: "test",
+    };
+    const result = validateQuestionSet([leaked], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected[0].errors.join(" ")).toMatch(/short question prompt contains accepted answer/);
+  });
+
+  it("rejects a short question whose prompt contains repeated accepted term with punctuation", () => {
+    const repeated: Question = {
+      id: "q_short_repeated",
+      conceptId: "c1",
+      conceptName: "Photosynthesis",
+      type: "short",
+      prompt: 'Fill in the blank according to the material:\n\n"______ is the process by which photosynthesis converts light energy into chemical energy."\n\nWhich term does the blank represent?',
+      modelAnswer: "Photosynthesis",
+      acceptedAnswers: ["Photosynthesis", "photosynthesis"],
+      explanation: 'The material states: "Photosynthesis is the process by which plants convert light energy into chemical energy."',
+      evidence: [{ quote: "Photosynthesis is the process by which plants convert light energy into chemical energy." }],
+      difficulty: "medium",
+      generator: "test",
+    };
+    const result = validateQuestionSet([repeated], SOURCE, concepts);
+    expect(result.accepted).toHaveLength(0);
+    expect(result.rejected[0].errors.join(" ")).toMatch(/short question prompt contains accepted answer/);
+  });
+
   it("rejects an explanation question whose model answer is unsupported", () => {
     const fabricated: Question = {
       id: "q_expl_bad",

@@ -389,4 +389,26 @@ export const db = {
       createdAt: r.created_at as string,
     }));
   },
+
+  /**
+   * Attempts eligible to contribute to learner-visible mastery and readiness signals.
+   * Excludes attempts from active mock exams until the mock session is completed.
+   */
+  getEligibleCourseAttempts(courseId: string): AttemptRecord[] {
+    const rows = getDb()
+      .prepare(
+        `SELECT a.concept_id, a.score, a.created_at
+         FROM attempts a
+         JOIN sessions s ON a.session_id = s.id
+         WHERE a.course_id = ?
+           AND NOT (s.kind = 'mock' AND s.status = 'active')
+         ORDER BY a.created_at, a.id`,
+      )
+      .all(courseId) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      conceptId: r.concept_id as string,
+      score: r.score as number,
+      createdAt: r.created_at as string,
+    }));
+  },
 };

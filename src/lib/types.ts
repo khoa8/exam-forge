@@ -132,9 +132,10 @@ export interface Session {
 /** Question as exposed to the client: answer key and explanations removed. */
 export type ClientQuestion = Pick<
   QuestionBase,
-  "id" | "conceptId" | "conceptName" | "prompt" | "difficulty"
+  "id" | "prompt" | "difficulty"
 > & {
   type: QuestionType;
+  conceptName?: string;
   options?: McqOption[];
   statement?: string;
 };

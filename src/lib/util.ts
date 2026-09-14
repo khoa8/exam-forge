@@ -148,3 +148,59 @@ export function isAlphaRatio(s: string): number {
   const letters = s.replace(/[^a-zA-Z]/g, "").length;
   return s.length === 0 ? 0 : letters / s.length;
 }
+
+/**
+ * Detects whether a learner-facing short question prompt visibly contains any of its accepted or model answers.
+ * Uses token-bounded, case-insensitive normalization to prevent answer leakage while avoiding false positives
+ * on substrings of unrelated words.
+ */
+export function promptContainsAcceptedShortAnswer(
+  prompt: string,
+  acceptedAnswers: string[],
+  modelAnswer?: string,
+): boolean {
+  const normP = normText(prompt);
+  if (!normP) return false;
+
+  const candidates = new Set<string>();
+  const addCandidate = (raw: string | undefined) => {
+    if (!raw) return;
+    const trimmed = raw.trim();
+    if (trimmed.length > 0) candidates.add(trimmed);
+    const stripped = stripArticle(trimmed);
+    if (stripped.length > 0) candidates.add(stripped);
+    const cleaned = normAnswer(raw);
+    if (cleaned.length > 0) candidates.add(cleaned);
+  };
+
+  if (modelAnswer) addCandidate(modelAnswer);
+  for (const a of acceptedAnswers) {
+    addCandidate(a);
+  }
+
+  const wordChar = /[a-z0-9]/i;
+
+  for (const cand of candidates) {
+    const normCand = normText(cand);
+    // Skip terms that are too short to safely check without false-positives (< 2 characters)
+    if (normCand.length < 2) continue;
+
+    let idx = normP.indexOf(normCand);
+    while (idx !== -1) {
+      const before = idx === 0 ? "" : normP[idx - 1];
+      const end = idx + normCand.length;
+      const after = end >= normP.length ? "" : normP[end];
+
+      const startBounded = !wordChar.test(normCand[0]) || !before || !wordChar.test(before);
+      const endBounded = !wordChar.test(normCand[normCand.length - 1]) || !after || !wordChar.test(after);
+
+      if (startBounded && endBounded) {
+        return true;
+      }
+      idx = normP.indexOf(normCand, idx + 1);
+    }
+  }
+
+  return false;
+}
+

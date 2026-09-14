@@ -110,11 +110,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ courseId, course, conceptCount, questionCount }, { status: 201 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to create course.";
     // Material that cannot support the learning loop is a client-content problem
     // (422), not a server fault — the honest error message is returned as-is.
-    const status = err instanceof MaterialNotViableError ? 422 : 500;
+    if (err instanceof MaterialNotViableError) {
+      return NextResponse.json({ error: err.message }, { status: 422 });
+    }
+    const message = err instanceof Error ? err.message : "Failed to create course.";
     console.error("[POST /api/courses]", err);
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

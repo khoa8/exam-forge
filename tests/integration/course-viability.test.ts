@@ -121,4 +121,14 @@ describe("assessment viability gate before course persistence", () => {
     const session = startSession(courseId, "diagnostic");
     expect(session.questionIds.length).toBeGreaterThan(0);
   });
+
+  it("rejects sufficiently long material with no extractable concepts as MaterialNotViableError, persisting nothing", async () => {
+    const unstructured =
+      "This is an ordinary story about a quiet day in the countryside. The sun was warm and the breeze was pleasant. " +
+      "We took a long walk down the path until we reached the old stone bridge near the river bank.";
+    const err = await attemptCreate(unstructured);
+    expect(err).toBeInstanceOf(MaterialNotViableError);
+    expect((err as Error).message).toMatch(/Could not identify any concepts/i);
+    expect(db.listCourses()).toHaveLength(0);
+  });
 });
