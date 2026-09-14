@@ -13,10 +13,10 @@ import type {
   SessionSummary,
 } from "./types";
 import { db } from "./db";
-import { generateDeterministic } from "./provider/deterministic";
+import { generateDeterministic, NoConceptsError } from "./provider/deterministic";
 import { computeMastery } from "./mastery";
 import { computeReadiness } from "./readiness";
-import { gradeAnswer } from "./grade";
+import { gradeAnswer, isShortAnswerEquivalentToConcept } from "./grade";
 import { sampleDiagnostic, sampleMock, samplePractice } from "./sampler";
 import { validateCourseViability } from "./validate";
 import { randomId } from "./util";
@@ -59,7 +59,15 @@ export interface CreateCourseInput {
 }
 
 export async function createCourse(input: CreateCourseInput): Promise<{ courseId: string; course: Course; conceptCount: number; questionCount: number }> {
-  const output = generateDeterministic(input.text);
+  let output;
+  try {
+    output = generateDeterministic(input.text);
+  } catch (err) {
+    if (err instanceof NoConceptsError) {
+      throw new MaterialNotViableError(err.message);
+    }
+    throw err;
+  }
 
   // Assessment-viability gate (architecture invariant): reject a course that could
   // not enter the core learning loop BEFORE anything is persisted.
@@ -156,7 +164,7 @@ export function getCourseOverview(courseId: string): CourseOverview {
     importance: c.importance,
   }));
 
-  const attempts = db.getCourseAttempts(courseId);
+  const attempts = db.getEligibleCourseAttempts(courseId);
   const nowIso = new Date().toISOString();
   const masteryByConcept = new Map<string, MasteryState>();
   for (const concept of concepts) {
@@ -268,7 +276,7 @@ export function startSession(courseId: string, kind: SessionKind, conceptId?: st
 }
 
 function weakestConceptId(courseId: string, concepts: Concept[]): string {
-  const attempts = db.getCourseAttempts(courseId);
+  const attempts = db.getEligibleCourseAttempts(courseId);
   const nowIso = new Date().toISOString();
   let worst = concepts[0];
   let worstMastery = 2;
@@ -286,8 +294,6 @@ function weakestConceptId(courseId: string, concepts: Concept[]): string {
 export interface SessionView {
   session: Session;
   questions: ClientQuestion[];
-  /** Concept names for context display. */
-  conceptNames: Record<string, string>;
   /** The user's own saved answers (never the answer key). */
   givenAnswers: Record<string, AnswerValue>;
   /** For diagnostic/practice: grades revealed as answered. For mock: hidden until finish. */
@@ -303,8 +309,6 @@ export function getSessionView(sessionId: string): SessionView {
   const allQuestions = db.getQuestions(session.courseId).map((q) => JSON.parse(q.payloadJson) as Question);
   const byId = new Map(allQuestions.map((q) => [q.id, q]));
   const sessionQuestions = session.questionIds.map((id) => byId.get(id)).filter((q): q is Question => Boolean(q));
-  const conceptNames: Record<string, string> = {};
-  for (const q of sessionQuestions) conceptNames[q.conceptId] = q.conceptName;
 
   const attempts = db.getSessionAttempts(sessionId);
   const revealed: Record<string, GradeResult> = {};
@@ -325,20 +329,30 @@ export function getSessionView(sessionId: string): SessionView {
 
   const completed = session.status === "completed";
   const isMock = session.kind === "mock";
+  const sessionKind = session.kind as SessionKind;
+  const sessionStatus = session.status as "active" | "completed";
+
+  const clientQuestions = sessionQuestions.map((q) => {
+    const isAnswered = attempts.some((a) => a.questionId === q.id);
+    return clientQuestion(q, {
+      sessionKind,
+      sessionStatus,
+      isAnswered,
+    });
+  });
 
   return {
     session: {
       id: session.id,
       courseId: session.courseId,
-      kind: session.kind as SessionKind,
+      kind: sessionKind,
       conceptId: session.conceptId,
       questionIds: session.questionIds,
-      status: session.status as "active" | "completed",
+      status: sessionStatus,
       createdAt: session.createdAt,
       completedAt: session.completedAt,
     },
-    questions: sessionQuestions.map(clientQuestion),
-    conceptNames,
+    questions: clientQuestions,
     givenAnswers,
     // Mock exams hide correctness until submitted.
     revealed: completed || !isMock ? revealed : {},
@@ -431,12 +445,39 @@ function summarize(
   };
 }
 
-/** Strip the answer key before sending a question to the client. */
-export function clientQuestion(q: Question): ClientQuestion {
+export interface QuestionPresentationContext {
+  sessionKind: SessionKind;
+  sessionStatus: "active" | "completed";
+  isAnswered: boolean;
+}
+
+/**
+ * Determine whether a question's topic/concept name is safe to disclose to the client.
+ * Fail-closed: answer-equivalent term-recall questions are withheld until safe.
+ */
+export function isConceptNameSafe(q: Question, context: QuestionPresentationContext): boolean {
+  if (!isShortAnswerEquivalentToConcept(q, q.conceptName)) {
+    return true;
+  }
+  if (context.sessionStatus === "completed") {
+    return true;
+  }
+  if (context.sessionKind === "mock") {
+    return false;
+  }
+  return context.isAnswered;
+}
+
+/**
+ * Strip the answer key before sending a question to the client.
+ * Topic context disclosure is fail-closed and strictly computed from session context.
+ */
+export function clientQuestion(q: Question, context: QuestionPresentationContext): ClientQuestion {
+  const safeTopic = isConceptNameSafe(q, context);
   return {
     id: q.id,
     conceptId: q.conceptId,
-    conceptName: q.conceptName,
+    ...(safeTopic && q.conceptName ? { conceptName: q.conceptName } : {}),
     prompt: q.prompt,
     difficulty: q.difficulty,
     type: q.type,

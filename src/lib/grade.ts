@@ -82,6 +82,54 @@ function gradeTrueFalse(
   return result;
 }
 
+export interface ShortMatchScore {
+  bestRatio: number;
+  exactMatch: boolean;
+  isCorrect: boolean;
+  isPartial: boolean;
+}
+
+/**
+ * Canonical short-answer matching engine shared between grading and disclosure safety.
+ * Compares candidate text against accepted answers under deterministic normalization.
+ */
+export function matchShortAnswer(acceptedAnswers: string[], candidateText: string): ShortMatchScore {
+  const given = normAnswer(candidateText);
+  if (given.length === 0) {
+    return { bestRatio: 0, exactMatch: false, isCorrect: false, isPartial: false };
+  }
+  let best = 0;
+  let exact = false;
+  for (const accepted of acceptedAnswers) {
+    const norm = normAnswer(accepted);
+    if (given === norm) {
+      best = 1;
+      exact = true;
+      break;
+    }
+    const ratio = similarityRatio(given, norm);
+    if (ratio > best) {
+      best = ratio;
+    }
+  }
+  return {
+    bestRatio: best,
+    exactMatch: exact,
+    isCorrect: best >= 0.9,
+    isPartial: best >= 0.75,
+  };
+}
+
+/**
+ * Determines whether a question's accepted short answer is equivalent to the concept name,
+ * using the exact same canonical matching rule that grades short answers.
+ */
+export function isShortAnswerEquivalentToConcept(question: Question, conceptName: string): boolean {
+  if (question.type !== "short") return false;
+  const match = matchShortAnswer(question.acceptedAnswers, conceptName);
+  return match.isCorrect;
+}
+
 function gradeShort(question: Extract<Question, { type: "short" }>, answer: AnswerValue): GradeResult {
   const result = baseResult(question);
   if (answer.type !== "text") {
@@ -93,15 +141,10 @@ function gradeShort(question: Extract<Question, { type: "short" }>, answer: Answ
     result.feedback = "You did not type an answer.";
     return result;
   }
-  let best = 0;
-  for (const accepted of question.acceptedAnswers) {
-    const norm = normAnswer(accepted);
-    best = Math.max(best, similarityRatio(given, norm));
-    if (given === norm) best = 1;
-  }
-  const correct = best >= 0.9;
+  const match = matchShortAnswer(question.acceptedAnswers, answer.text);
+  const correct = match.isCorrect;
   result.correct = correct;
-  result.score = correct ? 1 : best >= 0.75 ? 0.5 : 0;
+  result.score = correct ? 1 : match.isPartial ? 0.5 : 0;
   result.feedback = correct
     ? `Correct — "${answer.text.trim()}" matches the term from the material. ${question.explanation}`
     : result.score > 0

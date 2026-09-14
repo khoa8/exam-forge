@@ -27,6 +27,18 @@ export class ProviderError extends Error {
   }
 }
 
+/**
+ * Controlled provider error: the source material contained no extractable,
+ * grounded concepts. Represents an expected user-content limitation rather
+ * than an unexpected internal server failure.
+ */
+export class NoConceptsError extends ProviderError {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoConceptsError";
+  }
+}
+
 export interface ProviderOutput {
   title: string;
   concepts: Concept[];
@@ -50,7 +62,7 @@ export function generateDeterministic(text: string): ProviderOutput {
   const conceptsDropped = extraction.concepts.length - concepts.length;
 
   if (concepts.length === 0) {
-    throw new ProviderError(
+    throw new NoConceptsError(
       "Could not identify any concepts in this material. Try text with headings and clear definitions (for example 'X is …').",
     );
   }

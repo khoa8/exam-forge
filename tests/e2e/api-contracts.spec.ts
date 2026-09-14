@@ -260,3 +260,120 @@ test.describe("domain semantics and valid flows", () => {
     expect(await getAnsweredCount(request, sessionId)).toBe(1);
   });
 });
+
+test.describe("F-01 assessment integrity: no answer-bearing topic disclosure via active session API", () => {
+  test("active diagnostic and mock session payloads withhold topic from term-recall questions until safe", async ({ request }) => {
+    const courseId = await createSampleCourse(request);
+    const diagSessionId = await startDiagnosticSession(request, courseId);
+
+    // Fetch initial active diagnostic view via GET /api/sessions/[id]
+    const diagRes = await request.get(`/api/sessions/${diagSessionId}`);
+    expect(diagRes.status()).toBe(200);
+    const diagBody = (await diagRes.json()) as {
+      conceptNames?: unknown;
+      questions: { id: string; type: string; prompt: string; conceptName?: string }[];
+    };
+
+    // Redundant conceptNames map must NOT be present in session view
+    expect(diagBody.conceptNames).toBeUndefined();
+
+    // Find short question in the active diagnostic
+    const shortQ = diagBody.questions.find((q) => q.type === "short");
+    expect(shortQ).toBeDefined();
+
+    // An unanswered short term-recall question must NOT disclose conceptName
+    expect(shortQ!.conceptName).toBeUndefined();
+
+    // Ensure serialized representation contains no conceptName property for this unanswered short question
+    const serializedShort = JSON.stringify(shortQ);
+    expect(serializedShort).not.toContain('"conceptName"');
+
+    // Safe question types (e.g. mcq, truefalse) DO retain their conceptName
+    const safeQ = diagBody.questions.find((q) => q.type !== "short");
+    expect(safeQ).toBeDefined();
+    expect(typeof safeQ!.conceptName).toBe("string");
+    expect(safeQ!.conceptName!.length).toBeGreaterThan(0);
+
+    // Active Mock session: topic must remain withheld even after answering until completion
+    const mockRes = await request.post(`/api/courses/${courseId}/sessions`, {
+      headers: { "Content-Type": "application/json" },
+      data: JSON.stringify({ kind: "mock" }),
+    });
+    expect(mockRes.status()).toBe(201);
+    const mockSessionId = ((await mockRes.json()) as { session: { id: string } }).session.id;
+
+    const mockViewRes = await request.get(`/api/sessions/${mockSessionId}`);
+    const mockBody = (await mockViewRes.json()) as {
+      questions: { id: string; type: string; prompt: string; conceptName?: string }[];
+    };
+    const mockShortQ = mockBody.questions.find((q) => q.type === "short");
+    expect(mockShortQ).toBeDefined();
+    expect(mockShortQ!.conceptName).toBeUndefined();
+
+    // Submit answer to the short question in active mock
+    const answerRes = await postJson(request, `/api/sessions/${mockSessionId}/answer`, {
+      questionId: mockShortQ!.id,
+      answer: { type: "text", text: "any attempt" },
+    });
+    expect(answerRes.status()).toBe(200);
+    const answerBody = (await answerRes.json()) as { grade: unknown };
+    expect(answerBody.grade).toBeNull();
+
+    // View while mock is active: conceptName is STILL withheld
+    const activeMockRes = await request.get(`/api/sessions/${mockSessionId}`);
+    const activeMockBody = (await activeMockRes.json()) as {
+      questions: { id: string; type: string; conceptName?: string }[];
+    };
+    const activeMockShort = activeMockBody.questions.find((q) => q.id === mockShortQ!.id)!;
+    expect(activeMockShort.conceptName).toBeUndefined();
+
+    // Complete the mock: topic context is now revealed
+    const finishRes = await request.post(`/api/sessions/${mockSessionId}/finish`);
+    expect(finishRes.status()).toBe(200);
+    const finishBody = (await finishRes.json()) as {
+      questions: { id: string; type: string; conceptName?: string }[];
+      review: { question: { id: string; conceptName: string } }[];
+    };
+    const finishedMockShort = finishBody.questions.find((q) => q.id === mockShortQ!.id)!;
+    expect(typeof finishedMockShort.conceptName).toBe("string");
+    expect(finishedMockShort.conceptName!.length).toBeGreaterThan(0);
+    expect(finishBody.review).toBeDefined();
+    const reviewItem = finishBody.review.find((r) => r.question.id === mockShortQ!.id)!;
+    expect(reviewItem.question.conceptName).toBe(finishedMockShort.conceptName);
+  });
+});
+
+test.describe("F-03 material viability error classification", () => {
+  test("POST /api/courses with sufficiently long unstructured text returns 422 with an honest message and creates no course", async ({ request }) => {
+    const before = await request.get("/api/courses");
+    const beforeBody = (await before.json()) as { courses: unknown[] };
+
+    const unstructured =
+      "This is an ordinary story about a quiet day in the countryside. The sun was warm and the breeze was pleasant. " +
+      "We took a long walk down the path until we reached the old stone bridge near the river bank.";
+
+    const res = await postJson(request, "/api/courses", { text: unstructured });
+    expect(res.status()).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/Could not identify any concepts/i);
+    expect(body.error).toMatch(/headings and clear definitions/i);
+
+    const after = await request.get("/api/courses");
+    const afterBody = (await after.json()) as { courses: unknown[] };
+    expect(afterBody.courses.length).toBe(beforeBody.courses.length);
+  });
+
+  test("POST /api/courses with headings but insufficient assessment structure returns 422", async ({ request }) => {
+    const headingsWithoutDefs =
+      "# Plant Water Notes\n\n" +
+      "## Osmosis\nOsmosis moves water across a semipermeable membrane toward the region of higher solute concentration.\n\n" +
+      "## Turgor\nTurgor pressure keeps soft plant stems firm and upright while the plant stays hydrated.\n\n" +
+      "## Wilting\nWilting begins when water loss outpaces root uptake and cells lose their rigidity.\n\n" +
+      "## Xylem\nXylem conduits lift water from the roots to the leaves through transpiration pull.";
+
+    const res = await postJson(request, "/api/courses", { text: headingsWithoutDefs });
+    expect(res.status()).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/enough grounded assessment structure/i);
+  });
+});

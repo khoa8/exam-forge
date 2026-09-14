@@ -127,7 +127,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
         <div ref={cardRef} tabIndex={-1} className="bg-white border rounded-xl p-5 sm:p-6 space-y-5 focus:outline-hidden focus-visible:outline-2 focus-visible:outline-indigo-600">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <span className="bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-wide font-medium">{current.type}</span>
-            <span>Topic: {current.conceptName}</span>
+            {current.conceptName ? <span>Topic: {current.conceptName}</span> : null}
             <span className="ml-auto">{current.difficulty}</span>
           </div>
 

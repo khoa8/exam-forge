@@ -1,5 +1,6 @@
 import type { Concept, Question } from "./types";
 import { seededRandom } from "./util";
+import { isShortAnswerEquivalentToConcept } from "./grade";
 
 /**
  * Balanced question sampling for sessions.
@@ -59,7 +60,11 @@ export function sampleDiagnostic(
 }
 
 export function samplePractice(questions: Question[], conceptId: string, seed: string, maxQuestions = 6): Question[] {
-  const pool = questions.filter((q) => q.conceptId === conceptId);
+  // Exclude term-recall questions where the answer reproduces the concept name
+  // that was already selected and disclosed in the practice-selection UI.
+  const pool = questions.filter(
+    (q) => q.conceptId === conceptId && !isShortAnswerEquivalentToConcept(q, q.conceptName),
+  );
   const ordered = shuffleSeeded(pool, seed + ":" + conceptId);
   // Prefer a mix: mcq/truefalse/short first, then explanation.
   const auto = ordered.filter((q) => AUTO_GRADABLE.has(q.type));
