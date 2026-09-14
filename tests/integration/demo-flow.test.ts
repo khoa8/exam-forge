@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { setDbPathForTests } from "@/lib/db";
+import { setDbPathForTests, db } from "@/lib/db";
 import { createCourse, answerQuestion, finishSession, getCourseOverview, getSessionView, startSession, ConflictError } from "@/lib/service";
 import { SAMPLE_MATERIAL } from "@/sample/material";
 import { ingestText } from "@/lib/ingest";
@@ -98,7 +98,10 @@ describe("bundled demo flow (no API key)", () => {
     const practice = startSession(courseId, "practice", weakest.id);
     const practiceView = getSessionView(practice.id);
     expect(practiceView.questions.length).toBeGreaterThan(0);
-    expect(practiceView.questions.every((q) => q.conceptId === weakest.id)).toBe(true);
+    expect(practiceView.session.conceptId).toBe(weakest.id);
+    const allDbQuestions = db.getQuestions(courseId);
+    const practiceQuestions = allDbQuestions.filter((q) => practiceView.session.questionIds.includes(q.id));
+    expect(practiceQuestions.every((q) => q.conceptId === weakest.id)).toBe(true);
 
     let practiceMasteryBefore = overview.concepts.find((c) => c.id === weakest.id)!.mastery;
     const scoredAllCorrect = practiceView.questions.filter((q) => q.type !== "mcq" && q.type !== "explanation");
@@ -117,7 +120,8 @@ describe("bundled demo flow (no API key)", () => {
     const mock = startSession(courseId, "mock");
     const mockView = getSessionView(mock.id);
     expect(mockView.questions.length).toBeGreaterThanOrEqual(6);
-    expect(new Set(mockView.questions.map((q) => q.conceptId)).size).toBeGreaterThanOrEqual(4);
+    const mockQuestions = allDbQuestions.filter((q) => mockView.session.questionIds.includes(q.id));
+    expect(new Set(mockQuestions.map((q) => q.conceptId)).size).toBeGreaterThanOrEqual(4);
 
     for (const q of mockView.questions) {
       const res = answerQuestion(mock.id, q.id, q.type === "mcq" ? { type: "option", optionId: q.options![0].id } : q.type === "truefalse" ? { type: "boolean", value: true } : { type: "text", text: "memory" });

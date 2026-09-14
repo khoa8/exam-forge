@@ -1,5 +1,5 @@
 import type { Concept, McqOption, Question } from "./types";
-import { contentWords, lightStem, normText, randomId, seededRandom, wordSimilarity } from "./util";
+import { contentWords, lightStem, normText, promptContainsAcceptedShortAnswer, randomId, seededRandom, wordSimilarity } from "./util";
 import { looksLikeInstruction } from "./provider/sanitize";
 
 /**
@@ -214,15 +214,20 @@ export function deriveKeyTerms(sourceSentence: string, conceptName: string): str
   return terms;
 }
 
-function buildShort(concept: Concept, def: DefinitionInfo): Question {
-  const blanked = swapSubject(def.sentence, def.subject, "______") ?? def.sentence;
+function buildShort(concept: Concept, def: DefinitionInfo): Question | null {
+  const blanked = swapSubject(def.sentence, def.subject, "______");
+  if (!blanked) return null;
   const accepted = Array.from(new Set([def.subject, def.subject.replace(/^(the|a|an)\s+/i, "")]));
+  const prompt = `Fill in the blank according to the material:\n\n"${blanked}"\n\nWhich term does the blank represent?`;
+  if (promptContainsAcceptedShortAnswer(prompt, accepted, def.subject)) {
+    return null;
+  }
   return {
     id: `q_${randomId()}`,
     conceptId: concept.id,
     conceptName: concept.name,
     type: "short",
-    prompt: `Fill in the blank according to the material:\n\n"${blanked}"\n\nWhich term does the blank represent?`,
+    prompt,
     modelAnswer: def.subject,
     acceptedAnswers: accepted,
     explanation: `The blank refers to ${def.subject}. The material states: "${def.sentence}"`,
@@ -287,7 +292,9 @@ export function generateQuestions(text: string, concepts: Concept[], seed: strin
     if (tf) questions.push(tf);
     else drop("True/false skipped: no grounded key sentence");
 
-    if (def) questions.push(buildShort(concept, def));
+    const shortQ = def ? buildShort(concept, def) : null;
+    if (shortQ) questions.push(shortQ);
+    else drop(def ? "Short dropped: prompt could not safely blank subject without answer leakage" : "Short skipped: no definition sentence");
 
     const expl = buildExplanation(concept, def, keySentences.get(concept.id) ?? null);
     if (expl) questions.push(expl);

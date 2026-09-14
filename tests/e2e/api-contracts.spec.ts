@@ -288,6 +288,29 @@ test.describe("F-01 assessment integrity: no answer-bearing topic disclosure via
     const serializedShort = JSON.stringify(shortQ);
     expect(serializedShort).not.toContain('"conceptName"');
 
+    // F-01A: Unsafe active short question must NOT expose conceptId or any cross-endpoint join identifier
+    expect((shortQ as Record<string, unknown>).conceptId).toBeUndefined();
+    expect(serializedShort).not.toContain('"conceptId"');
+
+    // Fetch the course overview endpoint
+    const courseRes = await request.get(`/api/courses/${courseId}`);
+    expect(courseRes.status()).toBe(200);
+    const courseBody = (await courseRes.json()) as {
+      concepts: { id: string; name: string; description: string }[];
+    };
+    expect(courseBody.concepts.length).toBeGreaterThan(0);
+
+    // Cross-endpoint join safety: the active short question cannot be joined to course concepts
+    const joinedConcept = courseBody.concepts.find((c) => c.id === (shortQ as Record<string, unknown>).conceptId);
+    expect(joinedConcept).toBeUndefined();
+
+    // Course overview itself remains complete and intact
+    for (const c of courseBody.concepts) {
+      expect(typeof c.id).toBe("string");
+      expect(typeof c.name).toBe("string");
+      expect(c.name.length).toBeGreaterThan(0);
+    }
+
     // Safe question types (e.g. mcq, truefalse) DO retain their conceptName
     const safeQ = diagBody.questions.find((q) => q.type !== "short");
     expect(safeQ).toBeDefined();
@@ -309,6 +332,8 @@ test.describe("F-01 assessment integrity: no answer-bearing topic disclosure via
     const mockShortQ = mockBody.questions.find((q) => q.type === "short");
     expect(mockShortQ).toBeDefined();
     expect(mockShortQ!.conceptName).toBeUndefined();
+    expect((mockShortQ as Record<string, unknown>).conceptId).toBeUndefined();
+    expect(JSON.stringify(mockShortQ)).not.toContain('"conceptId"');
 
     // Submit answer to the short question in active mock
     const answerRes = await postJson(request, `/api/sessions/${mockSessionId}/answer`, {

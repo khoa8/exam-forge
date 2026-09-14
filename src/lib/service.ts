@@ -476,7 +476,6 @@ export function clientQuestion(q: Question, context: QuestionPresentationContext
   const safeTopic = isConceptNameSafe(q, context);
   return {
     id: q.id,
-    conceptId: q.conceptId,
     ...(safeTopic && q.conceptName ? { conceptName: q.conceptName } : {}),
     prompt: q.prompt,
     difficulty: q.difficulty,

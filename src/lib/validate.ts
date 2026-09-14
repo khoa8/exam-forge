@@ -1,5 +1,5 @@
 import type { Concept, Question } from "./types";
-import { contentWords, lightStem, normAnswer, normText, wordSimilarity } from "./util";
+import { contentWords, lightStem, normAnswer, normText, promptContainsAcceptedShortAnswer, wordSimilarity } from "./util";
 import { isSourceSpan, quoteIsGrounded } from "./extract";
 import { looksLikeInstruction } from "./provider/sanitize";
 import { swapSubject } from "./generate";
@@ -198,6 +198,10 @@ export function validateQuestion(q: Question, sourceText: string, concepts: Conc
       if (!q.acceptedAnswers || q.acceptedAnswers.length === 0) errors.push("no accepted answers");
       if (q.acceptedAnswers.some((a) => normAnswer(a).length === 0)) errors.push("empty accepted answer");
       if (!q.modelAnswer || normAnswer(q.modelAnswer).length === 0) errors.push("model answer missing");
+      // Defense in depth: the learner-facing prompt must not visibly contain its own accepted or model answer.
+      if (q.prompt && promptContainsAcceptedShortAnswer(q.prompt, q.acceptedAnswers ?? [], q.modelAnswer)) {
+        errors.push("short question prompt contains accepted answer");
+      }
       // Provenance: graded answers must be token-bounded spans of the question's
       // own validated, concept-aligned evidence — unrelated terms from elsewhere
       // in the document (or from the concept's other fields) are rejected.
