@@ -408,6 +408,14 @@ export function finishSession(sessionId: string): SessionView {
   const session = db.getSession(sessionId);
   if (!session) throw new NotFoundError("Session");
   if (session.status !== "completed") {
+    if (session.kind === "diagnostic") {
+      const attempts = db.getSessionAttempts(sessionId);
+      const answeredQuestionIds = new Set(attempts.map((a) => a.questionId));
+      const hasUnanswered = session.questionIds.some((qId) => !answeredQuestionIds.has(qId));
+      if (hasUnanswered) {
+        throw new ConflictError("Answer all diagnostic questions before finishing.");
+      }
+    }
     db.completeSession(sessionId, new Date().toISOString());
   }
   return getSessionView(sessionId);

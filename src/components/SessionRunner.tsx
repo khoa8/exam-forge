@@ -31,6 +31,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const questions = view.questions;
   const finished = view.session.status === "completed";
   const isMock = view.session.kind === "mock";
+  const isDiagnostic = view.session.kind === "diagnostic";
   const current: ClientQuestion | undefined = questions[index];
   const isLast = index === questions.length - 1;
   const total = questions.length;
@@ -101,7 +102,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
     return <Finished view={view} courseId={courseId} />;
   }
 
-  const allAnswered = answeredCount === total;
+  const allAnswered = questions.length > 0 && questions.every((q) => Boolean(view.givenAnswers[q.id]));
 
   return (
     <div className="space-y-6">
@@ -188,15 +189,37 @@ export function SessionRunner({ initialView, courseId }: Props) {
             ) : effectiveFeedback ? (
               <button
                 onClick={() => {
-                  if (isLast) void finish();
-                  else {
-                    const nextIdx = questions.findIndex((q, i) => i > index && !view.givenAnswers[q.id]);
-                    goTo(nextIdx >= 0 ? nextIdx : index + 1);
+                  if (isDiagnostic) {
+                    if (allAnswered) {
+                      void finish();
+                    } else {
+                      const nextIdx = questions.findIndex((q, i) => i > index && !view.givenAnswers[q.id]);
+                      if (nextIdx >= 0) {
+                        goTo(nextIdx);
+                      } else {
+                        const firstUnanswered = questions.findIndex((q) => !view.givenAnswers[q.id]);
+                        goTo(firstUnanswered >= 0 ? firstUnanswered : 0);
+                      }
+                    }
+                  } else {
+                    if (isLast) void finish();
+                    else {
+                      const nextIdx = questions.findIndex((q, i) => i > index && !view.givenAnswers[q.id]);
+                      goTo(nextIdx >= 0 ? nextIdx : index + 1);
+                    }
                   }
                 }}
                 className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700"
               >
-                {isLast ? "Finish" : "Next question →"}
+                {isDiagnostic
+                  ? allAnswered
+                    ? "Finish"
+                    : questions.findIndex((q, i) => i > index && !view.givenAnswers[q.id]) >= 0
+                      ? "Next question →"
+                      : "Next unanswered →"
+                  : isLast
+                    ? "Finish"
+                    : "Next question →"}
               </button>
             ) : (
               <button
@@ -250,7 +273,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
         </div>
       )}
 
-      {!isMock && answeredCount === total && (
+      {!isMock && allAnswered && (
         <div className="border rounded-xl bg-white p-4 text-center">
           <button
             onClick={() => void finish()}
