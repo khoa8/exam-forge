@@ -155,10 +155,11 @@ describe("bundled demo flow (no API key)", () => {
     const { courseId } = await createCourse({ text: SAMPLE_MATERIAL, sourceType: "bundled", ingestionWarnings: [] });
     const session = startSession(courseId, "diagnostic");
     const view = getSessionView(session.id);
-    const q = view.questions[0];
-    answerQuestion(session.id, q.id, { type: "text", text: "anything" });
+    for (const q of view.questions) {
+      answerQuestion(session.id, q.id, { type: "text", text: "anything" });
+    }
     finishSession(session.id);
-    expect(() => answerQuestion(session.id, view.questions[1].id, { type: "text", text: "late" })).toThrow(ConflictError);
+    expect(() => answerQuestion(session.id, view.questions[0].id, { type: "text", text: "late" })).toThrow(ConflictError);
   });
 
   it("rejects starting sessions for unknown courses/concepts", async () => {

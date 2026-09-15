@@ -402,3 +402,117 @@ test.describe("F-03 material viability error classification", () => {
     expect(body.error).toMatch(/enough grounded assessment structure/i);
   });
 });
+
+test.describe("diagnostic completion invariant API contract", () => {
+  test("POST /api/sessions/[id]/finish rejects incomplete diagnostic session with 409 Conflict", async ({ request }) => {
+    const courseId = await createSampleCourse(request);
+    const diagSessionId = await startDiagnosticSession(request, courseId);
+
+    // Initial session view: 0 answered
+    const diagViewRes = await request.get(`/api/sessions/${diagSessionId}`);
+    expect(diagViewRes.status()).toBe(200);
+    const diagView = (await diagViewRes.json()) as {
+      answeredCount: number;
+      session: { status: string; completedAt: string | null };
+      questions: { id: string; type: string; options?: { id: string }[] }[];
+    };
+    expect(diagView.answeredCount).toBe(0);
+    expect(diagView.session.status).toBe("active");
+    expect(diagView.session.completedAt).toBeNull();
+    const questions = diagView.questions;
+    expect(questions.length).toBeGreaterThan(1);
+
+    // 1. Attempt to finish with 0 questions answered -> 409 Conflict
+    const earlyFinishRes = await request.post(`/api/sessions/${diagSessionId}/finish`);
+    expect(earlyFinishRes.status()).toBe(409);
+    const earlyFinishBody = (await earlyFinishRes.json()) as { error: string };
+    expect(earlyFinishBody.error).toMatch(/Answer all diagnostic questions before finishing/i);
+    expect(JSON.stringify(earlyFinishBody)).not.toMatch(SAFE_ERROR_PATTERN);
+
+    // 2. Answer only the first question
+    const q1 = questions[0];
+    const answer1 =
+      q1.type === "mcq"
+        ? { type: "option", optionId: q1.options![0].id }
+        : q1.type === "truefalse"
+          ? { type: "boolean", value: true }
+          : { type: "text", text: "sample answer" };
+    const ansRes = await postJson(request, `/api/sessions/${diagSessionId}/answer`, {
+      questionId: q1.id,
+      answer: answer1,
+    });
+    expect(ansRes.status()).toBe(200);
+    expect(await getAnsweredCount(request, diagSessionId)).toBe(1);
+
+    // 3. Attempt to finish with 1 question answered (incomplete) -> 409 Conflict
+    const partialFinishRes = await request.post(`/api/sessions/${diagSessionId}/finish`);
+    expect(partialFinishRes.status()).toBe(409);
+    const partialFinishBody = (await partialFinishRes.json()) as { error: string };
+    expect(partialFinishBody.error).toMatch(/Answer all diagnostic questions before finishing/i);
+    expect(JSON.stringify(partialFinishBody)).not.toMatch(SAFE_ERROR_PATTERN);
+
+    // Verify session remains active, answeredCount is unchanged, completedAt is null
+    const postRejectViewRes = await request.get(`/api/sessions/${diagSessionId}`);
+    const postRejectView = (await postRejectViewRes.json()) as {
+      answeredCount: number;
+      session: { status: string; completedAt: string | null };
+    };
+    expect(postRejectView.session.status).toBe("active");
+    expect(postRejectView.session.completedAt).toBeNull();
+    expect(postRejectView.answeredCount).toBe(1);
+
+    // Verify course overview: diagnostic is active, not completed, nextAction remains diagnostic
+    const courseRes = await request.get(`/api/courses/${courseId}`);
+    const courseBody = (await courseRes.json()) as {
+      sessions: { id: string; status: string; completedAt: string | null }[];
+      activeSession: { id: string; kind: string } | null;
+      readiness: { nextAction: { kind: string } };
+    };
+    const sessionListItem = courseBody.sessions.find((s) => s.id === diagSessionId)!;
+    expect(sessionListItem.status).toBe("active");
+    expect(sessionListItem.completedAt).toBeNull();
+    expect(courseBody.activeSession).toEqual({ id: diagSessionId, kind: "diagnostic" });
+    expect(courseBody.readiness.nextAction.kind).toBe("diagnostic");
+
+    // 4. Answer remaining questions
+    for (let i = 1; i < questions.length; i++) {
+      const q = questions[i];
+      const ans =
+        q.type === "mcq"
+          ? { type: "option", optionId: q.options![0].id }
+          : q.type === "truefalse"
+            ? { type: "boolean", value: true }
+            : { type: "text", text: "sample answer" };
+      await postJson(request, `/api/sessions/${diagSessionId}/answer`, {
+        questionId: q.id,
+        answer: ans,
+      });
+    }
+
+    // 5. Finishing all answered questions succeeds with 200 OK
+    const successFinishRes = await request.post(`/api/sessions/${diagSessionId}/finish`);
+    expect(successFinishRes.status()).toBe(200);
+    const successFinishBody = (await successFinishRes.json()) as {
+      session: { status: string; completedAt: string | null };
+      summary: { status: string; totalQuestions: number; answered: number };
+    };
+    expect(successFinishBody.session.status).toBe("completed");
+    expect(successFinishBody.session.completedAt).not.toBeNull();
+    expect(successFinishBody.summary.answered).toBe(questions.length);
+
+    // Course overview now reflects completed diagnostic and advanced nextAction
+    const finalCourseRes = await request.get(`/api/courses/${courseId}`);
+    const finalCourseBody = (await finalCourseRes.json()) as {
+      sessions: { id: string; status: string; completedAt: string | null }[];
+      activeSession: { id: string } | null;
+      readiness: { nextAction: { kind: string } };
+    };
+    expect(finalCourseBody.sessions.find((s) => s.id === diagSessionId)!.status).toBe("completed");
+    expect(finalCourseBody.activeSession).toBeNull();
+    expect(finalCourseBody.readiness.nextAction.kind).toBe("practice");
+
+    // Idempotent finish call: subsequent finish POST returns 200 with completed session
+    const repeatFinishRes = await request.post(`/api/sessions/${diagSessionId}/finish`);
+    expect(repeatFinishRes.status()).toBe(200);
+  });
+});

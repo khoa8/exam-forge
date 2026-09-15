@@ -9,7 +9,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     return NextResponse.json(finishSession(id));
   } catch (err) {
-    const status = (err as Error).name === "NotFoundError" ? 404 : 500;
+    const name = (err as Error).name;
+    const status = name === "NotFoundError" ? 404 : name === "ConflictError" ? 409 : 500;
     return NextResponse.json({ error: (err as Error).message }, { status });
   }
 }
