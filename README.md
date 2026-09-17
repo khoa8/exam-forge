@@ -72,11 +72,14 @@ npm run test:smoke:prod  # production build + smoke test on an isolated server
 npm run typecheck        # tsc --noEmit
 npm run lint             # eslint
 npm run db:reset         # delete local progress data
+npm run screenshots      # regenerate the README screenshots (run `npm run build` first)
 ```
 
 Browser tests never touch your local course data: `test:e2e` and `test:smoke:prod` start
 their own server on a dedicated port with a disposable SQLite database in a temp
-directory.
+directory. `npm run screenshots` is isolated the same way — it captures from its own
+loopback server with a fresh temporary database, so published screenshots can only ever
+show the bundled demo material and never your own courses.
 
 ## Privacy
 
