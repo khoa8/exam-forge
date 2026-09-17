@@ -8,13 +8,15 @@
  * its own production server on a dedicated loopback port with a disposable SQLite
  * database in a temporary directory (see ./lib/capture-env.mjs), seeds it with the
  * bundled demo material only, and removes the server and the temporary data on success,
- * on failure and on interruption.
+ * on failure and on interruption — including a signal that arrives while that server is
+ * still starting (see ./lib/capture-lifecycle.mjs).
  */
 import { chromium } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCaptureServer } from "./lib/capture-env.mjs";
+import { runCaptureLifecycle } from "./lib/capture-lifecycle.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(PROJECT_ROOT, "docs", "screenshots");
@@ -120,20 +122,13 @@ async function capture(baseUrl) {
 }
 
 async function main() {
-  const server = await startCaptureServer({ cwd: PROJECT_ROOT });
-  const onSignal = (signal) => {
-    void server.stop().finally(() => process.exit(signal === "SIGINT" ? 130 : 143));
-  };
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
-  try {
-    await capture(server.baseUrl);
-    console.log(`Screenshots written to ${path.relative(PROJECT_ROOT, OUT)}`);
-  } finally {
-    process.removeListener("SIGINT", onSignal);
-    process.removeListener("SIGTERM", onSignal);
-    await server.stop();
-  }
+  await runCaptureLifecycle({
+    start: (signal) => startCaptureServer({ cwd: PROJECT_ROOT, signal }),
+    run: async (server) => {
+      await capture(server.baseUrl);
+      console.log(`Screenshots written to ${path.relative(PROJECT_ROOT, OUT)}`);
+    },
+  });
 }
 
 main().catch((err) => {
