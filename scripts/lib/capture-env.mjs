@@ -13,7 +13,10 @@
  *  - before capture begins, the environment proves it is serving that disposable
  *    database and that it starts empty;
  *  - the server process and the temporary directory are removed by `stop()`, which the
- *    capture script calls on success, on failure and on interruption.
+ *    capture script calls on success, on failure and on interruption;
+ *  - startup observes an optional `AbortSignal`, so a termination signal delivered while
+ *    the server is still starting releases the resources already acquired instead of
+ *    leaving an orphaned server process and temporary directory behind.
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -81,6 +84,11 @@ function waitForExit(child, timeoutMs) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Raised when a termination signal cancels startup while it still owns resources. */
+function startupInterrupted() {
+  return new Error("Capture server startup was interrupted by a termination signal.");
+}
+
 /**
  * Start the isolated capture server and prove it is safe to capture.
  *
@@ -90,6 +98,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  *   serverCommand?: { command: string, args: string[] },
  *   cwd?: string,
  *   readyTimeoutMs?: number,
+ *   signal?: AbortSignal,
  * }} [options]
  * @returns {Promise<{ host: string, port: number, baseUrl: string, tempDir: string, dbPath: string, stop: () => Promise<void> }>}
  */
@@ -99,20 +108,24 @@ export async function startCaptureServer({
   cwd = process.cwd(),
   serverCommand = defaultServerCommand({ port, cwd }),
   readyTimeoutMs = 120_000,
+  signal,
 } = {}) {
+  if (signal?.aborted) throw startupInterrupted();
   if (!(await isPortFree(port, host))) {
     throw new Error(
       `Refusing to capture: ${host}:${port} is already in use. Screenshot capture never reuses an ` +
         "existing server, because it may be serving a real learner database. Stop that process and retry.",
     );
   }
+  // The port probe is the last await before resources are acquired; a signal that arrived
+  // during it must not lead to a temporary directory being created at all.
+  if (signal?.aborted) throw startupInterrupted();
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "examforge-screenshots-"));
   const dbPath = path.join(tempDir, "capture.sqlite");
   const baseUrl = `http://${host}:${port}`;
   const log = [];
   let child = null;
-  let stopped = false;
   let spawnError = null;
 
   const record = (chunk) => {
@@ -124,18 +137,32 @@ export async function startCaptureServer({
   };
   const logTail = () => (log.length > 0 ? `\n--- capture server output ---\n${log.join("\n")}` : "");
 
-  const stop = async () => {
-    if (stopped) return;
-    stopped = true;
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
-      if (!(await waitForExit(child, 5_000))) {
-        child.kill("SIGKILL");
-        await waitForExit(child, 2_000);
+  // One cleanup promise for every caller: repeated or concurrent `stop()` calls all await
+  // the same termination and temporary-directory removal instead of returning early.
+  let stopPromise = null;
+  const stop = () => {
+    stopPromise ??= (async () => {
+      try {
+        if (child && child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGTERM");
+          if (!(await waitForExit(child, 5_000))) {
+            child.kill("SIGKILL");
+            await waitForExit(child, 2_000);
+          }
+        }
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
-    }
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    })();
+    return stopPromise;
   };
+
+  // Release owned resources as soon as termination is requested; the abort checks below
+  // then stop startup from continuing with a server that is already being torn down.
+  const onAbort = () => {
+    void stop().catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
     child = spawn(serverCommand.command, serverCommand.args, {
@@ -154,6 +181,7 @@ export async function startCaptureServer({
 
     const deadline = Date.now() + readyTimeoutMs;
     for (;;) {
+      if (signal?.aborted) throw startupInterrupted();
       if (spawnError) throw new Error(`Capture server failed to start: ${spawnError.message}${logTail()}`);
       if (child.exitCode !== null || child.signalCode !== null) {
         throw new Error(`Capture server exited before it was ready.${logTail()}`);
@@ -181,6 +209,7 @@ export async function startCaptureServer({
     } catch {
       // handled below
     }
+    if (signal?.aborted) throw startupInterrupted();
     if (courses === null) {
       throw new Error(`Capture server did not return a readable course list.${logTail()}`);
     }
@@ -201,5 +230,9 @@ export async function startCaptureServer({
   } catch (err) {
     await stop();
     throw err;
+  } finally {
+    // Cancellation is only observed while startup owns the resources; afterwards `stop()`
+    // is the caller's cleanup path.
+    signal?.removeEventListener("abort", onAbort);
   }
 }

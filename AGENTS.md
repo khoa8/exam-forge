@@ -146,6 +146,7 @@ Do not maintain duplicate roadmaps in Markdown.
 - Preserve unrelated work and shared history.
 - Do not force-push or rewrite shared history unless explicitly requested.
 - Do not push, open/merge PRs, create releases, change repository settings, or deploy unless the user explicitly asks for that action.
+- When opening or updating a pull request, follow the repository's current PR template. Keep the PR body concise and do not replace the template with a task report, audit transcript, implementation log, or full validation output unless the user explicitly requests it.
 
 ## Definition of done
 
