@@ -24,6 +24,25 @@ async function answerCurrentQuestion(page: Page) {
   }
 }
 
+/** The approved Home privacy disclosure, verbatim. */
+const HOME_PRIVACY_NOTE =
+  "Privacy note: ExamForge runs entirely on your machine. Concepts, questions and feedback are generated " +
+  "locally and deterministically — your material is never sent to an external service.";
+
+test("home shows the approved privacy note and no global footer", async ({ page }) => {
+  await page.goto("/");
+
+  // The disclosure stays on the Home page with exactly the approved wording. The whole-text
+  // match also guards against re-adding the removed "external AI service" / "no API key is
+  // needed" clauses or appending a substitute sentence.
+  const privacyNote = page.getByText(/^Privacy note:/);
+  await expect(privacyNote).toBeVisible();
+  await expect(privacyNote).toHaveText(HOME_PRIVACY_NOTE);
+
+  // The former global footer (privacy + readiness disclaimers) is gone from the root layout.
+  await expect(page.locator("footer")).toHaveCount(0);
+});
+
 test("bundled demo: material -> diagnostic -> practice -> mock -> readiness", async ({ page }) => {
   test.setTimeout(180_000);
 

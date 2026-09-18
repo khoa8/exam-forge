@@ -185,8 +185,8 @@ export default function HomePage() {
       )}
 
       <p className="text-xs text-slate-500 max-w-3xl mx-auto text-center">
-        Privacy note: ExamForge runs entirely on your machine. Concepts, questions and feedback are generated locally
-        and deterministically — your material is never sent to an external AI service, and no API key is needed.
+        Privacy note: ExamForge runs entirely on your machine. Concepts, questions and feedback are generated
+        locally and deterministically — your material is never sent to an external service.
       </p>
 
       <section className="space-y-3">
