@@ -164,7 +164,7 @@ export function getCourseOverview(courseId: string): CourseOverview {
     importance: c.importance,
   }));
 
-  const attempts = db.getEligibleCourseAttempts(courseId);
+  const attempts = db.getEligibleCourseAttempts(courseId, [...activeMockQuestionIds(courseId)]);
   const nowIso = new Date().toISOString();
   const masteryByConcept = new Map<string, MasteryState>();
   for (const concept of concepts) {
@@ -238,6 +238,21 @@ export function startSession(courseId: string, kind: SessionKind, conceptId?: st
     importance: c.importance,
   }));
   if (concepts.length === 0) throw new ConflictError("This course has no concepts to study.");
+
+  // At most one active mock exam per course. A second active mock would share the same
+  // persisted questions (sampling is deterministic per course), so its protection would
+  // withhold the first mock's post-submit review and summary — breaking the deferred-
+  // feedback product contract. Diagnostic/Practice may still coexist with a mock; only
+  // mock-on-mock is rejected. Nothing is deleted or completed here.
+  if (kind === "mock") {
+    const activeMock = db.listSessions(courseId).find((s) => s.kind === "mock" && s.status === "active");
+    if (activeMock) {
+      throw new ConflictError(
+        "A mock exam is already in progress for this course. Submit it before starting a new one.",
+      );
+    }
+  }
+
   const questions: Question[] = db.getQuestions(courseId).map((q) => JSON.parse(q.payloadJson));
 
   let picked: Question[];
@@ -276,7 +291,7 @@ export function startSession(courseId: string, kind: SessionKind, conceptId?: st
 }
 
 function weakestConceptId(courseId: string, concepts: Concept[]): string {
-  const attempts = db.getEligibleCourseAttempts(courseId);
+  const attempts = db.getEligibleCourseAttempts(courseId, [...activeMockQuestionIds(courseId)]);
   const nowIso = new Date().toISOString();
   let worst = concepts[0];
   let worstMastery = 2;
@@ -312,31 +327,38 @@ export interface SessionView {
 }
 
 /**
- * Questions whose answer keys are protected by an active (unsubmitted) mock exam.
+ * Question IDs protected by an active (unsubmitted) mock exam in this course.
  *
- * Mock-exam integrity is a property of the QUESTION, not of the mock's own response:
- * while a mock is active, no other session in the course — active or completed — may
- * grade its questions or disclose their correctness, answer key, explanation or
- * answer-equivalent topic. Otherwise the learner could recover the mock's answers from
- * a concurrent Diagnostic/Practice session, or from a session that already answered the
- * same persisted question.
+ * This is the single definition of mock protection. While a mock is active:
+ * - no other session may grade its questions or disclose their correctness, answer key,
+ *   explanation or answer-equivalent topic; and
+ * - course-level mastery/readiness must not derive correctness from attempts for those
+ *   questions, otherwise the aggregate becomes an oracle for the unsubmitted mock.
  *
- * Returns an empty set for the active mock itself (it owns the protection) and for
- * courses without an active mock.
+ * A course normally has at most one active mock (`startSession` enforces it). Databases
+ * written before that lifecycle rule can hold more than one, so the sets are unioned —
+ * the fail-closed behaviour for that legacy state.
  */
-function protectedQuestionIds(
-  courseId: string,
-  session: { id: string; kind: string; status: string },
-): Set<string> {
-  if (session.kind === "mock" && session.status === "active") return new Set<string>();
+function activeMockQuestionIds(courseId: string): Set<string> {
   const ids = new Set<string>();
-  for (const other of db.listSessions(courseId)) {
-    if (other.id === session.id) continue;
-    if (other.kind === "mock" && other.status === "active") {
-      for (const questionId of other.questionIds) ids.add(questionId);
+  for (const session of db.listSessions(courseId)) {
+    if (session.kind === "mock" && session.status === "active") {
+      for (const questionId of session.questionIds) ids.add(questionId);
     }
   }
   return ids;
+}
+
+/**
+ * Questions protected from the point of view of one session. The active mock itself owns
+ * its questions (it defers feedback rather than withholding it), so it is unrestricted.
+ */
+function protectedQuestionIds(
+  courseId: string,
+  session: { kind: string; status: string },
+): Set<string> {
+  if (session.kind === "mock" && session.status === "active") return new Set<string>();
+  return activeMockQuestionIds(courseId);
 }
 
 export function getSessionView(sessionId: string): SessionView {

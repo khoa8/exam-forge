@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Stepper } from "@/components/Stepper";
 import { MasteryBar } from "@/components/MasteryBar";
+import { MockProtectionNotice } from "@/components/MockProtectionNotice";
 import type { CourseOverview } from "@/lib/service";
 
 export default function CourseDashboardPage() {
@@ -135,6 +136,7 @@ export default function CourseDashboardPage() {
       {/* Concepts */}
       <section className="space-y-3">
         <h2 className="font-semibold text-lg">Concepts from your material</h2>
+        <MockProtectionNotice active={overview.activeSession?.kind === "mock"} />
         <div className="grid md:grid-cols-2 gap-3">
           {concepts.map((c) => (
             <div key={c.id} className="bg-white border rounded-xl p-4 space-y-2">

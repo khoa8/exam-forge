@@ -18,13 +18,20 @@ function MockInner() {
   const { id } = useParams<{ id: string }>();
   const params = useSearchParams();
   const sessionId = params.get("session");
-  const [info, setInfo] = useState<{ title: string; questionCount: number } | null>(null);
+  const [info, setInfo] = useState<{ title: string; questionCount: number; activeMockId: string | null } | null>(null);
 
   useEffect(() => {
     if (sessionId) return;
     fetch(`/api/courses/${id}`)
       .then((r) => r.json())
-      .then((d) => setInfo({ title: d.course?.title ?? "", questionCount: d.questionCount ?? 0 }))
+      .then((d) =>
+        setInfo({
+          title: d.course?.title ?? "",
+          questionCount: d.questionCount ?? 0,
+          // Only one mock exam may be active per course (enforced server-side).
+          activeMockId: d.activeSession?.kind === "mock" ? (d.activeSession.id as string) : null,
+        }),
+      )
       .catch(() => undefined);
   }, [id, sessionId]);
 
@@ -55,7 +62,7 @@ function MockInner() {
             <div className="flex gap-3">
               <button
                 onClick={() => start()}
-                disabled={starting}
+                disabled={starting || Boolean(info?.activeMockId)}
                 className="px-5 py-2.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-60"
               >
                 {starting ? "Assembling exam…" : "Start mock exam"}
@@ -64,6 +71,15 @@ function MockInner() {
                 Cancel
               </Link>
             </div>
+            {info?.activeMockId && (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" role="status">
+                A mock exam is already in progress.{" "}
+                <Link href={`/course/${id}/mock?session=${info.activeMockId}`} className="font-medium underline">
+                  Resume it
+                </Link>{" "}
+                — you can start a new one after submitting it.
+              </p>
+            )}
             {info && info.questionCount < 4 && (
               <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 This course has few questions ({info.questionCount}). The mock exam will be short.
