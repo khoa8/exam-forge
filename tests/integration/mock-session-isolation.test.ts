@@ -8,8 +8,10 @@ import {
   ConflictError,
   createCourse,
   finishSession,
+  getCourseOverview,
   getSessionView,
   startSession,
+  type CourseOverview,
   type SessionView,
 } from "@/lib/service";
 import { SAMPLE_MATERIAL } from "@/sample/material";
@@ -183,8 +185,95 @@ function correctAnswer(q: Question): AnswerValue {
   return { type: "text", text: q.modelAnswer };
 }
 
+/** A deterministically wrong answer for every question type (always scores 0). */
+function wrongAnswer(q: Question): AnswerValue {
+  if (q.type === "mcq") return { type: "option", optionId: q.options.find((o) => o.id !== q.correctOptionId)!.id };
+  if (q.type === "truefalse") return { type: "boolean", value: !q.correctAnswer };
+  return { type: "text", text: "definitely wrong zzz" };
+}
+
 function persisted(questions: Question[], id: string): Question {
   return questions.find((q) => q.id === id)!;
+}
+
+/** The correctness-derived fields of a concept's learner-visible mastery state. */
+interface Exposure {
+  conceptId: string;
+  attempts: number;
+  correct: number;
+  mastery: number;
+  confidence: number;
+  status: string;
+  recentCorrect: number;
+  lastSeen: string | null;
+}
+
+function exposure(overview: CourseOverview, conceptIds: string[]): Exposure[] {
+  return conceptIds.map((conceptId) => {
+    const m = overview.concepts.find((c) => c.id === conceptId)!.mastery;
+    return {
+      conceptId,
+      attempts: m.attempts,
+      correct: m.correct,
+      mastery: m.mastery,
+      confidence: m.confidence,
+      status: m.status,
+      recentCorrect: m.recentCorrect,
+      lastSeen: m.lastSeen,
+    };
+  });
+}
+
+interface AggregateProbe {
+  courseId: string;
+  questions: Question[];
+  diagnostic: Session;
+  mock: Session;
+  /** Concepts whose only pre-mock attempt is for a question the active mock protects. */
+  protectedConceptIds: string[];
+  /** Course overview captured before the mock started (control). */
+  beforeMock: CourseOverview;
+  /** How many of the mock's questions belong to each concept. */
+  mockQuestionsPerConcept: Map<string, number>;
+}
+
+/**
+ * Build the reachable setup for the course-level aggregate question: a completed
+ * Diagnostic that answered every question either correctly or incorrectly, followed by a
+ * mock that protects at least one of those same persisted questions.
+ */
+async function buildAggregateProbe(answerCorrectly: boolean): Promise<AggregateProbe> {
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const { courseId, questions } = await createDemoCourse();
+    const diagnostic = startSession(courseId, "diagnostic");
+    for (const q of getSessionView(diagnostic.id).questions) {
+      const question = persisted(questions, q.id);
+      answerQuestion(diagnostic.id, q.id, answerCorrectly ? correctAnswer(question) : wrongAnswer(question));
+    }
+    finishSession(diagnostic.id);
+    const beforeMock = getCourseOverview(courseId);
+
+    const mock = startSession(courseId, "mock");
+    const inMock = new Set(mock.questionIds);
+    const overlap = diagnostic.questionIds.filter((id) => inMock.has(id));
+    if (overlap.length === 0) continue;
+
+    const mockQuestionsPerConcept = new Map<string, number>();
+    for (const id of mock.questionIds) {
+      const conceptId = persisted(questions, id).conceptId;
+      mockQuestionsPerConcept.set(conceptId, (mockQuestionsPerConcept.get(conceptId) ?? 0) + 1);
+    }
+    return {
+      courseId,
+      questions,
+      diagnostic,
+      mock,
+      protectedConceptIds: Array.from(new Set(overlap.map((id) => persisted(questions, id).conceptId))),
+      beforeMock,
+      mockQuestionsPerConcept,
+    };
+  }
+  throw new Error("No reachable overlap between a completed diagnostic and a mock was reproduced");
 }
 
 describe("active mock exam protects its questions across sessions", () => {
@@ -366,5 +455,184 @@ describe("active mock exam protects its questions across sessions", () => {
     const second = answerQuestion(diagnostic.id, q.id, correctAnswer(question));
     expect(second.grade).toEqual(first.grade);
     expect(db.getSessionAttempts(diagnostic.id)).toHaveLength(1);
+  });
+});
+
+describe("course-level signals do not reveal protected mock answers", () => {
+  it("cannot distinguish a correct from an incorrect prior answer while the mock is active", async () => {
+    for (const answeredCorrectly of [true, false]) {
+      const probe = await buildAggregateProbe(answeredCorrectly);
+      expect(probe.protectedConceptIds.length).toBeGreaterThan(0);
+
+      // Control: with no active mock the aggregate is genuinely sensitive to the answer,
+      // so the assertions below are not vacuously true.
+      const control = exposure(probe.beforeMock, probe.protectedConceptIds);
+      expect(control.every((e) => e.attempts === 1)).toBe(true);
+      expect(control.every((e) => e.correct === (answeredCorrectly ? 1 : 0))).toBe(true);
+
+      // While the mock is active, every correctness-derived signal for those concepts
+      // collapses to the neutral untested state — identical for a correct and an
+      // incorrect prior answer, so the protected question's key cannot be inferred.
+      const during = exposure(getCourseOverview(probe.courseId), probe.protectedConceptIds);
+      for (const e of during) {
+        expect(e).toEqual({
+          conceptId: e.conceptId,
+          attempts: 0,
+          correct: 0,
+          mastery: 0,
+          confidence: 0,
+          status: "untested",
+          recentCorrect: 0,
+          lastSeen: null,
+        });
+      }
+
+      // The learner's own history is preserved, and the plan treats it as untested
+      // rather than as a wrong answer (which would itself be a correctness signal).
+      expect(db.getSessionAttempts(probe.diagnostic.id)).toHaveLength(probe.diagnostic.questionIds.length);
+      const overview = getCourseOverview(probe.courseId);
+      for (const conceptId of probe.protectedConceptIds) {
+        expect(overview.readiness.untested.map((u) => u.conceptId)).toContain(conceptId);
+        expect(overview.readiness.weak.map((w) => w.conceptId)).not.toContain(conceptId);
+        expect(overview.readiness.strong.map((s) => s.conceptId)).not.toContain(conceptId);
+      }
+
+      // Submitting the mock releases the legitimate history: the diagnostic attempt
+      // counts again, plus the mock's own (deliberately wrong) attempt.
+      for (const q of getSessionView(probe.mock.id).questions) {
+        answerQuestion(probe.mock.id, q.id, wrongAnswer(persisted(probe.questions, q.id)));
+      }
+      finishSession(probe.mock.id);
+
+      const released = exposure(getCourseOverview(probe.courseId), probe.protectedConceptIds);
+      for (const e of released) {
+        expect(e.attempts).toBe(1 + (probe.mockQuestionsPerConcept.get(e.conceptId) ?? 0));
+        expect(e.correct).toBe(answeredCorrectly ? 1 : 0);
+      }
+    }
+  });
+
+  it("keeps active mock attempts out of learner-visible signals until submission", async () => {
+    const { courseId, questions } = await createDemoCourse();
+    const mock = startSession(courseId, "mock");
+    const before = getCourseOverview(courseId);
+
+    for (const q of getSessionView(mock.id).questions) {
+      expect(answerQuestion(mock.id, q.id, correctAnswer(persisted(questions, q.id))).grade).toBeNull();
+    }
+    const during = getCourseOverview(courseId);
+    expect(during.readiness.readiness).toBe(before.readiness.readiness);
+    expect(during.concepts.map((c) => c.mastery.attempts)).toEqual(before.concepts.map((c) => c.mastery.attempts));
+
+    finishSession(mock.id);
+    const after = getCourseOverview(courseId);
+    expect(after.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0)).toBe(
+      before.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0) + mock.questionIds.length,
+    );
+  });
+});
+
+describe("at most one active mock exam per course", () => {
+  it("rejects a second active mock and keeps the first mock's lifecycle intact", async () => {
+    const { courseId, questions } = await createDemoCourse();
+
+    const mockA = startSession(courseId, "mock");
+    expect(() => startSession(courseId, "mock")).toThrow(ConflictError);
+    expect(() => startSession(courseId, "mock")).toThrow(/already in progress/i);
+
+    // The rejected start created no second session row.
+    const mockSessions = db.listSessions(courseId).filter((s) => s.kind === "mock");
+    expect(mockSessions).toHaveLength(1);
+    expect(mockSessions[0].id).toBe(mockA.id);
+    expect(mockSessions[0].status).toBe("active");
+
+    // Diagnostic and Practice may still coexist with the active mock.
+    const diagnostic = startSession(courseId, "diagnostic");
+    expect(diagnostic.status).toBe("active");
+    const practiceConceptId = persisted(questions, mockA.questionIds[0]).conceptId;
+    expect(startSession(courseId, "practice", practiceConceptId).status).toBe("active");
+
+    // The first mock keeps deferred feedback, then a complete post-submit review.
+    const viewA = getSessionView(mockA.id);
+    expect(viewA.withheldQuestionIds).toEqual([]);
+    for (const q of viewA.questions) {
+      expect(answerQuestion(mockA.id, q.id, anyAnswer(persisted(questions, q.id))).grade).toBeNull();
+    }
+    const finishedA = finishSession(mockA.id);
+    expect(finishedA.session.status).toBe("completed");
+    expect(finishedA.withheldQuestionIds).toEqual([]);
+    expect(finishedA.summary).not.toBeNull();
+    expect(finishedA.review).toHaveLength(viewA.questions.length);
+
+    // A new mock can be started once the previous one is completed.
+    const mockB = startSession(courseId, "mock");
+    expect(mockB.id).not.toBe(mockA.id);
+    expect(getSessionView(mockB.id).session.status).toBe("active");
+  });
+
+  it("keeps legacy databases with two active mocks fail-closed and recovers on submission", async () => {
+    const { courseId, questions } = await createDemoCourse();
+
+    // A completed diagnostic first, so real history exists for the protected questions.
+    const diagnostic = startSession(courseId, "diagnostic");
+    for (const q of getSessionView(diagnostic.id).questions) {
+      answerQuestion(diagnostic.id, q.id, correctAnswer(persisted(questions, q.id)));
+    }
+    finishSession(diagnostic.id);
+
+    const mockA = startSession(courseId, "mock");
+    // Simulate a database written before the one-active-mock lifecycle rule existed.
+    const legacyMockId = "ses_legacy_mock";
+    db.insertSession({
+      id: legacyMockId,
+      courseId,
+      kind: "mock",
+      conceptId: null,
+      questionIds: [...mockA.questionIds],
+      createdAt: new Date().toISOString(),
+    });
+
+    const overlap = diagnostic.questionIds.filter((id) => mockA.questionIds.includes(id));
+    expect(overlap.length).toBeGreaterThan(0);
+    const protectedConceptIds = Array.from(new Set(overlap.map((id) => persisted(questions, id).conceptId)));
+
+    // The union of both active mocks still protects the shared questions, including
+    // against the course-level aggregate.
+    const overview = getCourseOverview(courseId);
+    for (const e of exposure(overview, protectedConceptIds)) {
+      expect(e).toEqual({
+        conceptId: e.conceptId,
+        attempts: 0,
+        correct: 0,
+        mastery: 0,
+        confidence: 0,
+        status: "untested",
+        recentCorrect: 0,
+        lastSeen: null,
+      });
+    }
+    expect(() => answerQuestion(diagnostic.id, overlap[0], anyAnswer(persisted(questions, overlap[0])))).toThrow(
+      ConflictError,
+    );
+
+    // Documented compatibility limitation: submitting one of the legacy duplicates keeps
+    // its review withheld while the other still protects the same questions. It is
+    // fail-closed (no answer key is disclosed) and resolves without data loss.
+    for (const q of getSessionView(mockA.id).questions) {
+      answerQuestion(mockA.id, q.id, anyAnswer(persisted(questions, q.id)));
+    }
+    const finishedA = finishSession(mockA.id);
+    expect(finishedA.session.status).toBe("completed");
+    expect(finishedA.withheldQuestionIds).toEqual(expect.arrayContaining(mockA.questionIds));
+    expect(finishedA.summary).toBeNull();
+
+    // Submitting the remaining legacy mock releases everything; no attempt was deleted.
+    finishSession(legacyMockId);
+    const released = getSessionView(mockA.id);
+    expect(released.withheldQuestionIds).toEqual([]);
+    expect(released.summary).not.toBeNull();
+    expect(released.review).toHaveLength(mockA.questionIds.length);
+    expect(db.getSessionAttempts(diagnostic.id)).toHaveLength(diagnostic.questionIds.length);
+    expect(db.getSessionAttempts(mockA.id)).toHaveLength(mockA.questionIds.length);
   });
 });
