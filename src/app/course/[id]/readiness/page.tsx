@@ -103,7 +103,7 @@ export default function ReadinessPage() {
 
       <section className="space-y-3">
         <h2 className="font-semibold text-lg">Concept mastery (highest review priority first)</h2>
-        <MockProtectionNotice active={overview.activeSession?.kind === "mock"} />
+        <MockProtectionNotice active={overview.activeMockSession !== null} />
         <div className="bg-white border rounded-xl divide-y">
           {ordered.map((m) => (
             <div key={m.conceptId} className="px-4 py-3 space-y-1.5">
