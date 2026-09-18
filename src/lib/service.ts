@@ -298,9 +298,45 @@ export interface SessionView {
   givenAnswers: Record<string, AnswerValue>;
   /** For diagnostic/practice: grades revealed as answered. For mock: hidden until finish. */
   revealed: Record<string, GradeResult>;
+  /**
+   * Questions of this session whose answer-bearing feedback is withheld because they
+   * belong to an active (unsubmitted) mock exam in the same course. Answers recorded
+   * before that mock started stay stored (first answer counts) and their feedback
+   * reappears once the mock is submitted; new answers to these questions are rejected
+   * while the mock is active.
+   */
+  withheldQuestionIds: string[];
   answeredCount: number;
   review: SessionReviewItem[] | null;
   summary: SessionSummary | null;
+}
+
+/**
+ * Questions whose answer keys are protected by an active (unsubmitted) mock exam.
+ *
+ * Mock-exam integrity is a property of the QUESTION, not of the mock's own response:
+ * while a mock is active, no other session in the course — active or completed — may
+ * grade its questions or disclose their correctness, answer key, explanation or
+ * answer-equivalent topic. Otherwise the learner could recover the mock's answers from
+ * a concurrent Diagnostic/Practice session, or from a session that already answered the
+ * same persisted question.
+ *
+ * Returns an empty set for the active mock itself (it owns the protection) and for
+ * courses without an active mock.
+ */
+function protectedQuestionIds(
+  courseId: string,
+  session: { id: string; kind: string; status: string },
+): Set<string> {
+  if (session.kind === "mock" && session.status === "active") return new Set<string>();
+  const ids = new Set<string>();
+  for (const other of db.listSessions(courseId)) {
+    if (other.id === session.id) continue;
+    if (other.kind === "mock" && other.status === "active") {
+      for (const questionId of other.questionIds) ids.add(questionId);
+    }
+  }
+  return ids;
 }
 
 export function getSessionView(sessionId: string): SessionView {
@@ -310,6 +346,9 @@ export function getSessionView(sessionId: string): SessionView {
   const byId = new Map(allQuestions.map((q) => [q.id, q]));
   const sessionQuestions = session.questionIds.map((id) => byId.get(id)).filter((q): q is Question => Boolean(q));
 
+  const protectedIds = protectedQuestionIds(session.courseId, session);
+  const withheldQuestionIds = sessionQuestions.filter((q) => protectedIds.has(q.id)).map((q) => q.id);
+
   const attempts = db.getSessionAttempts(sessionId);
   const revealed: Record<string, GradeResult> = {};
   const givenAnswers: Record<string, AnswerValue> = {};
@@ -317,12 +356,17 @@ export function getSessionView(sessionId: string): SessionView {
   for (const q of sessionQuestions) {
     const at = attempts.find((a) => a.questionId === q.id);
     if (at) {
+      // The learner's own answer is never the answer key, so it stays visible even
+      // while the question's feedback is withheld.
       const saved = JSON.parse(at.answerJson) as AnswerValue;
       givenAnswers[q.id] = saved;
+      if (protectedIds.has(q.id)) continue;
       const result = gradeAnswer(q, saved);
       revealed[q.id] = result;
       review.push({ question: q, userAnswer: saved, result });
-    } else {
+    } else if (!protectedIds.has(q.id)) {
+      // Review items embed the persisted question, so withheld questions are omitted
+      // entirely rather than shipped with a stripped result.
       review.push({ question: q, userAnswer: null, result: null });
     }
   }
@@ -338,6 +382,7 @@ export function getSessionView(sessionId: string): SessionView {
       sessionKind,
       sessionStatus,
       isAnswered,
+      answerProtected: protectedIds.has(q.id),
     });
   });
 
@@ -356,9 +401,12 @@ export function getSessionView(sessionId: string): SessionView {
     givenAnswers,
     // Mock exams hide correctness until submitted.
     revealed: completed || !isMock ? revealed : {},
+    withheldQuestionIds,
     answeredCount: attempts.length,
     review: completed ? review : null,
-    summary: completed ? summarize(session, sessionQuestions, attempts) : null,
+    // A summary aggregates correctness across the whole session, so it is withheld
+    // while any of its questions is protected by an active mock exam.
+    summary: completed && withheldQuestionIds.length === 0 ? summarize(session, sessionQuestions, attempts) : null,
   };
 }
 
@@ -367,6 +415,15 @@ export function answerQuestion(sessionId: string, questionId: string, answer: An
   if (!session) throw new NotFoundError("Session");
   if (session.status === "completed") throw new ConflictError("This session is already completed.");
   if (!session.questionIds.includes(questionId)) throw new NotFoundError("Question in this session");
+
+  // Cross-session mock protection: a question that belongs to an active mock exam is
+  // graded only by that mock. Rejecting the write keeps the failure honest and prevents
+  // this session from recording an answer whose feedback would reveal the mock's key.
+  if (protectedQuestionIds(session.courseId, session).has(questionId)) {
+    throw new ConflictError(
+      "This question is part of an active mock exam. Submit the mock exam before answering it in another session.",
+    );
+  }
 
   const allQuestions = db.getQuestions(session.courseId).map((q) => JSON.parse(q.payloadJson) as Question);
   const question = allQuestions.find((q) => q.id === questionId);
@@ -457,13 +514,19 @@ export interface QuestionPresentationContext {
   sessionKind: SessionKind;
   sessionStatus: "active" | "completed";
   isAnswered: boolean;
+  /** True while an active mock exam in this course protects the question's answer key. */
+  answerProtected: boolean;
 }
 
 /**
  * Determine whether a question's topic/concept name is safe to disclose to the client.
- * Fail-closed: answer-equivalent term-recall questions are withheld until safe.
+ * Fail-closed: answer-equivalent term-recall questions are withheld until safe, and an
+ * active mock exam's answer-key protection always wins.
  */
 export function isConceptNameSafe(q: Question, context: QuestionPresentationContext): boolean {
+  if (context.answerProtected) {
+    return false;
+  }
   if (!isShortAnswerEquivalentToConcept(q, q.conceptName)) {
     return true;
   }

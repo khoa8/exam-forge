@@ -39,6 +39,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const currentSaved = current ? Boolean(view.givenAnswers[current.id]) : false;
   const currentRevealed = current && !isMock ? view.revealed[current.id] : undefined;
   const effectiveFeedback = feedback ?? currentRevealed ?? null;
+  const currentWithheld = current ? view.withheldQuestionIds.includes(current.id) : false;
 
   // Keep keyboard/screen-reader context on the question card after navigation.
   useEffect(() => {
@@ -148,6 +149,11 @@ export function SessionRunner({ initialView, courseId }: Props) {
           {currentSaved && (
             <p className="text-xs text-slate-500" role="status">
               Answer saved — first answers count, so this question is locked.
+            </p>
+          )}
+          {currentWithheld && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" role="status">
+              This question is part of your active mock exam, so it stays locked here until you submit that exam.
             </p>
           )}
           {error && (
@@ -413,6 +419,7 @@ export function FeedbackPanel({ result }: { result: GradeResult }) {
 function Finished({ view, courseId }: { view: SessionView; courseId: string }) {
   const summary = view.summary;
   const kind = view.session.kind;
+  const withheldCount = view.withheldQuestionIds.length;
   const scorePct = summary ? Math.round(summary.score * 100) : 0;
 
   const nextCta =
@@ -467,12 +474,20 @@ function Finished({ view, courseId }: { view: SessionView; courseId: string }) {
             ))}
           </div>
         )}
+        {withheldCount > 0 && (
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" role="status">
+            Feedback for {withheldCount} question{withheldCount > 1 ? "s" : ""} is hidden while your mock exam is in
+            progress. Submit the mock exam to see the full results here.
+          </p>
+        )}
         <div className="pt-2">{nextCta}</div>
       </div>
 
       {view.review && (
         <div className="space-y-4">
-          <h3 className="font-semibold text-lg">Review every question</h3>
+          <h3 className="font-semibold text-lg">
+            {withheldCount > 0 ? "Review questions" : "Review every question"}
+          </h3>
           {view.review.map((item, i) => (
             <div key={item.question.id} className="bg-white border rounded-xl p-4 space-y-3">
               <p className="text-xs text-slate-500">
