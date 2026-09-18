@@ -217,7 +217,8 @@ export function SessionRunner({ initialView, courseId }: Props) {
                 // next action by the effect above.
                 onClick={() => void saveAnswer()}
                 disabled={!draft || currentSaved}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40"
+                aria-disabled={busy}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40 aria-disabled:opacity-40"
               >
                 {currentSaved ? "Saved ✓" : "Save answer"}
               </button>
@@ -258,12 +259,15 @@ export function SessionRunner({ initialView, courseId }: Props) {
               </button>
             ) : (
               <button
-                // Not disabled while the request is in flight: disabling the control the
-                // learner just activated drops keyboard focus to <body>. `saveAnswer`
-                // already guards re-entry while busy, and the server keeps the first answer.
+                // Not natively disabled while the request is in flight: disabling the
+                // control the learner just activated drops keyboard focus to <body>. The
+                // button stays focusable and reports the temporary unavailability through
+                // aria-disabled instead — which is not decoration, because `saveAnswer`'s
+                // busy guard really does ignore activation until the request settles.
                 onClick={() => void saveAnswer()}
                 disabled={!draft || currentSaved}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40"
+                aria-disabled={busy}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40 aria-disabled:opacity-40"
               >
                 Check answer
               </button>
