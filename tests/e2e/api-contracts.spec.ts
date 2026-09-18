@@ -552,6 +552,7 @@ interface CourseOverviewBody {
   concepts: { id: string; mastery: { attempts: number; correct: number; status: string } }[];
   sessions: { id: string; kind: string; status: string }[];
   activeSession: { id: string; kind: string } | null;
+  activeMockSession: { id: string; kind: string } | null;
 }
 
 async function getCourseOverviewBody(request: APIRequestContext, courseId: string): Promise<CourseOverviewBody> {
@@ -606,9 +607,14 @@ test.describe("active mock exam lifecycle and course-level signals", () => {
     const course = await getCourseOverviewBody(request, courseId);
     expect(course.sessions.filter((s) => s.kind === "mock")).toHaveLength(1);
     expect(course.activeSession).toEqual({ id: mockA.id, kind: "mock" });
+    expect(course.activeMockSession).toEqual({ id: mockA.id, kind: "mock" });
 
-    // Diagnostic/Practice may still coexist with the active mock.
+    // Diagnostic/Practice may still coexist with the active mock. The later session becomes
+    // the newest active session, so the active mock must be reported independently of it.
     await startSessionOfKind(request, courseId, "diagnostic");
+    const coexisting = await getCourseOverviewBody(request, courseId);
+    expect(coexisting.activeSession?.kind).toBe("diagnostic");
+    expect(coexisting.activeMockSession).toEqual({ id: mockA.id, kind: "mock" });
 
     // The active mock keeps deferred feedback, then a complete post-submit review.
     const mockView = await getSessionViewBody(request, mockA.id);
@@ -634,12 +640,14 @@ test.describe("active mock exam lifecycle and course-level signals", () => {
   test("course overview withdraws attempts for protected questions from learner-visible mastery", async ({ request }) => {
     const { courseId, diagnostic, mock, overlap, beforeMock } = await findCompletedDiagnosticOverlap(request);
 
-    // Before the mock: every diagnostic attempt is eligible.
+    // Before the mock: every diagnostic attempt is eligible and no mock is in progress.
     expect(beforeMock.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0)).toBe(diagnostic.questionIds.length);
+    expect(beforeMock.activeMockSession).toBeNull();
 
     // While the mock is active, the attempts it protects are withdrawn, so the aggregate
     // cannot reveal whether the learner's saved answer for those questions was correct.
     const duringMock = await getCourseOverviewBody(request, courseId);
+    expect(duringMock.activeMockSession).toEqual({ id: mock.id, kind: "mock" });
     expect(duringMock.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0)).toBe(
       diagnostic.questionIds.length - overlap.length,
     );

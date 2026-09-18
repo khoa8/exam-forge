@@ -57,3 +57,41 @@ test("course and readiness pages explain the excluded signals while a mock is ac
   await expect(page.getByRole("heading", { name: /Concept mastery/i })).toBeVisible();
   await expect(page.getByText(notice)).toBeVisible();
 });
+
+test("the active mock is still recognized while a diagnostic session coexists", async ({ page }) => {
+  test.setTimeout(120_000);
+  const courseId = await loadDemoCourse(page);
+  const mockSessionId = await startMockExam(page);
+
+  // A Diagnostic started after the mock is allowed to coexist and becomes the newest
+  // active session, so "is a mock in progress?" cannot be read off the newest session.
+  await page.goto(`/course/${courseId}`);
+  await page.getByRole("link", { name: "Diagnostic" }).click();
+  await page.getByRole("button", { name: /start diagnostic/i }).click();
+  await page.waitForURL(/session=/);
+  const diagnosticSessionId = new URL(page.url()).searchParams.get("session")!;
+  await expect(page.getByText(/Question 1 of/)).toBeVisible();
+
+  // The Mock step must still recognize the mock that is actually in progress.
+  await page.goto(`/course/${courseId}/mock`);
+  await expect(page.getByRole("button", { name: /start mock exam/i })).toBeDisabled();
+  const resume = page.getByRole("link", { name: /resume it/i });
+  await expect(resume).toBeVisible();
+  await resume.click();
+  await expect(page).toHaveURL(new RegExp(`session=${mockSessionId}`));
+  await expect(page.getByText(/Answer all .* questions to submit/i)).toBeVisible();
+
+  // Course and readiness pages keep explaining that protected questions are excluded.
+  const notice = /excluded from mastery and readiness/i;
+  await page.goto(`/course/${courseId}`);
+  await expect(page.getByRole("heading", { name: "Concepts from your material" })).toBeVisible();
+  await expect(page.getByText(notice)).toBeVisible();
+
+  await page.goto(`/course/${courseId}/readiness`);
+  await expect(page.getByRole("heading", { name: /Concept mastery/i })).toBeVisible();
+  await expect(page.getByText(notice)).toBeVisible();
+
+  // Coexistence is preserved: the diagnostic is still active and resumable.
+  await page.goto(`/course/${courseId}/diagnostic?session=${diagnosticSessionId}`);
+  await expect(page.getByText(/Question 1 of/)).toBeVisible();
+});

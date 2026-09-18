@@ -314,9 +314,14 @@ export const db = {
     };
   },
 
+  /**
+   * Sessions newest first. `created_at` has millisecond precision, so two sessions created
+   * in the same millisecond would otherwise order arbitrarily (and could report the older
+   * one as newest). `rowid` is the insertion order, so it is the correct tiebreaker.
+   */
   listSessions(courseId: string): { id: string; courseId: string; kind: string; conceptId: string | null; questionIds: string[]; status: string; createdAt: string; completedAt: string | null }[] {
     const rows = getDb()
-      .prepare(`SELECT * FROM sessions WHERE course_id = ? ORDER BY created_at DESC`)
+      .prepare(`SELECT * FROM sessions WHERE course_id = ? ORDER BY created_at DESC, rowid DESC`)
       .all(courseId) as Record<string, unknown>[];
     return rows.map((r) => ({
       id: r.id as string,

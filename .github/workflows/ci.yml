@@ -1,8 +1,13 @@
 name: CI
 
 on:
-  push:
+  # Feature branches are validated through their pull request; `main` is validated after
+  # merge. A bare `push:` trigger would additionally run the full suite for every commit
+  # pushed to a branch that already has an open PR, duplicating the pull_request run.
   pull_request:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read

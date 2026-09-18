@@ -147,7 +147,21 @@ export interface CourseOverview {
   concepts: ConceptView[];
   readiness: ReadinessReport;
   sessions: SessionListItem[];
+  /** The newest active session, whatever its kind. */
   activeSession: { id: string; kind: SessionKind } | null;
+  /**
+   * The course's active (unsubmitted) mock exam, if any — the session to resume.
+   *
+   * Diagnostic/Practice sessions are intentionally allowed to coexist with an active mock,
+   * so `activeSession` (the newest active session) cannot answer "is a mock in progress?":
+   * a diagnostic started after the mock would hide it. Mock detection therefore has its own
+   * field, derived from every active session rather than from the newest one.
+   *
+   * A legacy database written before the one-active-mock lifecycle rule can hold more than
+   * one active mock; this is the newest of them (the one to resume), and a non-null value
+   * always means mock protection is active.
+   */
+  activeMockSession: { id: string; kind: "mock" } | null;
   questionCount: number;
 }
 
@@ -199,6 +213,7 @@ export function getCourseOverview(courseId: string): CourseOverview {
   );
 
   const active = sessions.find((s) => s.status === "active");
+  const activeMock = sessions.find((s) => s.kind === "mock" && s.status === "active");
 
   return {
     course,
@@ -212,6 +227,7 @@ export function getCourseOverview(courseId: string): CourseOverview {
     },
     sessions: sessionItems,
     activeSession: active ? { id: active.id, kind: active.kind as SessionKind } : null,
+    activeMockSession: activeMock ? { id: activeMock.id, kind: "mock" } : null,
     questionCount: db.getQuestions(courseId).length,
   };
 }

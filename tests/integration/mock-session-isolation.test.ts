@@ -532,6 +532,72 @@ describe("course-level signals do not reveal protected mock answers", () => {
   });
 });
 
+describe("session listing order", () => {
+  it("lists sessions newest first when several share the same millisecond timestamp", async () => {
+    const { courseId } = await createDemoCourse();
+
+    // `created_at` has millisecond precision, so rows written back-to-back can share it.
+    // The overview's "newest active session" is only meaningful if listing is deterministic.
+    const createdAt = new Date().toISOString();
+    const ids = ["ses_same_ms_a", "ses_same_ms_b", "ses_same_ms_c"];
+    for (const id of ids) {
+      db.insertSession({ id, courseId, kind: "diagnostic", conceptId: null, questionIds: [], createdAt });
+    }
+
+    expect(db.listSessions(courseId).map((s) => s.id)).toEqual([...ids].reverse());
+    expect(getCourseOverview(courseId).activeSession).toEqual({ id: ids[ids.length - 1], kind: "diagnostic" });
+  });
+});
+
+describe("an active mock stays identifiable while a later session coexists", () => {
+  it("reports the active mock independently of whichever active session is newest", async () => {
+    const { courseId, questions } = await createDemoCourse();
+
+    const mockA = startSession(courseId, "mock");
+    const onlyMock = getCourseOverview(courseId);
+    expect(onlyMock.activeSession).toEqual({ id: mockA.id, kind: "mock" });
+    expect(onlyMock.activeMockSession).toEqual({ id: mockA.id, kind: "mock" });
+
+    // A Diagnostic started after the mock is allowed to coexist and becomes the newest
+    // active session, so the singular `activeSession` no longer names the mock.
+    const diagnostic = startSession(courseId, "diagnostic");
+    const withDiagnostic = getCourseOverview(courseId);
+    expect(withDiagnostic.activeSession).toEqual({ id: diagnostic.id, kind: "diagnostic" });
+    expect(withDiagnostic.sessions.find((s) => s.id === mockA.id)!.status).toBe("active");
+    expect(withDiagnostic.sessions.find((s) => s.id === diagnostic.id)!.status).toBe("active");
+
+    // The mock is still identifiable, so the UI can keep offering the resume path and keep
+    // explaining that the mock's questions are excluded from mastery/readiness.
+    expect(withDiagnostic.activeMockSession).toEqual({ id: mockA.id, kind: "mock" });
+
+    // Practice as the later session behaves the same way.
+    const practiceConceptId = persisted(questions, mockA.questionIds[0]).conceptId;
+    const practice = startSession(courseId, "practice", practiceConceptId);
+    const withPractice = getCourseOverview(courseId);
+    expect(withPractice.activeSession).toEqual({ id: practice.id, kind: "practice" });
+    expect(withPractice.activeMockSession).toEqual({ id: mockA.id, kind: "mock" });
+
+    // Submitting the mock clears the signal instead of leaving a stale "in progress" state.
+    for (const q of getSessionView(mockA.id).questions) {
+      answerQuestion(mockA.id, q.id, anyAnswer(persisted(questions, q.id)));
+    }
+    finishSession(mockA.id);
+    expect(getCourseOverview(courseId).activeMockSession).toBeNull();
+  });
+
+  it("reports no active mock when only diagnostic/practice sessions are active", async () => {
+    const { courseId, questions } = await createDemoCourse();
+
+    const diagnostic = startSession(courseId, "diagnostic");
+    const conceptId = persisted(questions, getSessionView(diagnostic.id).questions[0].id).conceptId;
+    startSession(courseId, "practice", conceptId);
+
+    const overview = getCourseOverview(courseId);
+    expect(overview.activeSession?.kind).toBe("practice");
+    expect(overview.activeMockSession).toBeNull();
+  });
+});
+
 describe("at most one active mock exam per course", () => {
   it("rejects a second active mock and keeps the first mock's lifecycle intact", async () => {
     const { courseId, questions } = await createDemoCourse();
@@ -571,16 +637,11 @@ describe("at most one active mock exam per course", () => {
   });
 
   it("keeps legacy databases with two active mocks fail-closed and recovers on submission", async () => {
-    const { courseId, questions } = await createDemoCourse();
+    // A completed diagnostic whose history covers at least one question the mock protects.
+    // Sampling is seeded on the random course id, so this is discovered, not assumed.
+    const { courseId, questions, mock: mockA, other: diagnostic } = await findCompletedSessionOverlap();
+    const overlap = diagnostic.questionIds.filter((id) => mockA.questionIds.includes(id));
 
-    // A completed diagnostic first, so real history exists for the protected questions.
-    const diagnostic = startSession(courseId, "diagnostic");
-    for (const q of getSessionView(diagnostic.id).questions) {
-      answerQuestion(diagnostic.id, q.id, correctAnswer(persisted(questions, q.id)));
-    }
-    finishSession(diagnostic.id);
-
-    const mockA = startSession(courseId, "mock");
     // Simulate a database written before the one-active-mock lifecycle rule existed.
     const legacyMockId = "ses_legacy_mock";
     db.insertSession({
@@ -592,8 +653,6 @@ describe("at most one active mock exam per course", () => {
       createdAt: new Date().toISOString(),
     });
 
-    const overlap = diagnostic.questionIds.filter((id) => mockA.questionIds.includes(id));
-    expect(overlap.length).toBeGreaterThan(0);
     const protectedConceptIds = Array.from(new Set(overlap.map((id) => persisted(questions, id).conceptId)));
 
     // The union of both active mocks still protects the shared questions, including

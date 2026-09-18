@@ -24,14 +24,17 @@ function MockInner() {
     if (sessionId) return;
     fetch(`/api/courses/${id}`)
       .then((r) => r.json())
-      .then((d) =>
+      .then((d) => {
+        // Only one mock exam may be active per course (enforced server-side). It is reported
+        // explicitly because a Diagnostic/Practice session may be active at the same time and
+        // can be the newest active session.
+        const activeMockId: string | null = d.activeMockSession?.id ?? null;
         setInfo({
           title: d.course?.title ?? "",
           questionCount: d.questionCount ?? 0,
-          // Only one mock exam may be active per course (enforced server-side).
-          activeMockId: d.activeSession?.kind === "mock" ? (d.activeSession.id as string) : null,
-        }),
-      )
+          activeMockId,
+        });
+      })
       .catch(() => undefined);
   }, [id, sessionId]);
 
