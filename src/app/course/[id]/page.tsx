@@ -85,7 +85,7 @@ export default function CourseDashboardPage() {
       {/* Next action */}
       <section className="bg-indigo-600 text-white rounded-xl p-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-wide text-indigo-200 font-medium">Next study action</p>
+          <p className="text-xs uppercase tracking-wide text-indigo-100 font-medium">Next study action</p>
           <p className="text-lg font-semibold mt-1">{nextAction.message}</p>
         </div>
         <button
@@ -142,7 +142,7 @@ export default function CourseDashboardPage() {
             <div key={c.id} className="bg-white border rounded-xl p-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="font-medium">{c.name}</h3>
-                <span className="text-xs text-slate-400 shrink-0">
+                <span className="text-xs text-slate-500 shrink-0">
                   {c.mastery.attempts > 0 ? `${c.mastery.attempts} attempt${c.mastery.attempts > 1 ? "s" : ""}` : ""}
                 </span>
               </div>

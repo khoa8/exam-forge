@@ -17,7 +17,11 @@ export function Stepper({ courseId, current }: { courseId: string; current: stri
         const isDone = i < currentIdx;
         return (
           <span key={step.key} className="flex items-center gap-x-1">
-            {i > 0 && <span className="text-slate-300 mx-1">→</span>}
+            {i > 0 && (
+              <span aria-hidden="true" className="text-slate-300 mx-1">
+                →
+              </span>
+            )}
             <Link
               href={step.href(courseId)}
               aria-current={isCurrent ? "step" : undefined}
@@ -27,7 +31,7 @@ export function Stepper({ courseId, current }: { courseId: string; current: stri
                   ? "bg-indigo-600 text-white"
                   : isDone
                     ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                    : "bg-slate-100 text-slate-500 hover:bg-slate-200")
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200")
               }
             >
               {isDone ? "✓ " : ""}
