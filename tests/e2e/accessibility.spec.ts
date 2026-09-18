@@ -113,6 +113,40 @@ async function startDiagnostic(page: Page) {
   await expect(page.getByText(/Question 1 of/)).toBeVisible();
 }
 
+/**
+ * Hold answer submissions open until `release()` is called, so the in-flight state can be
+ * inspected deterministically instead of racing a request that is usually a few tens of
+ * milliseconds on loopback. `reached` resolves once the first POST has been intercepted.
+ */
+async function holdAnswerRequests(page: Page) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reached!: () => void;
+  const intercepted = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  let posts = 0;
+  await page.route("**/api/sessions/*/answer", async (route) => {
+    posts += 1;
+    reached();
+    await gate;
+    await route.continue();
+  });
+  return { reached: intercepted, release, posts: () => posts };
+}
+
+/** Native enabled state (aria-disabled is a separate, semantic signal). */
+function nativelyDisabled(page: Page, target: Locator): Promise<boolean> {
+  return target.evaluate((el) => (el as HTMLButtonElement).disabled);
+}
+
+/** The current question's answer control, whatever its type (radio group or text entry). */
+function answerControl(page: Page): Locator {
+  return page.getByRole("radio").first().or(page.getByRole("textbox").first());
+}
+
 test("answers can be given with the keyboard and feedback is announced", async ({ page }) => {
   await startDiagnostic(page);
 
@@ -304,6 +338,97 @@ test("immediate grading feedback is announced once, not through competing live r
   await expect(statuses).toHaveCount(1);
   await expect(statuses.first()).toHaveText(FEEDBACK);
   await expect(page.getByText(/Answer saved — first answers count/i)).toBeVisible();
+});
+
+test("an in-flight diagnostic save keeps focus and reports that it is unavailable", async ({ page }) => {
+  await startDiagnostic(page);
+  await answerWithKeyboard(page);
+
+  const check = page.getByRole("button", { name: /^Check answer$/i });
+  await tabTo(page, check);
+  await expect(check).toHaveAttribute("aria-disabled", "false");
+  expect(await nativelyDisabled(page, check)).toBe(false);
+
+  const held = await holdAnswerRequests(page);
+  await page.keyboard.press("Enter");
+  await held.reached;
+  // `busy` is rendered: the answer control is disabled while the request is in flight.
+  await expect(answerControl(page)).toBeDisabled();
+
+  // The activated control keeps focus and stays natively enabled, so removing the
+  // in-flight disabling does not reintroduce the focus-loss regression...
+  await expect(check).toBeFocused();
+  expect(await nativelyDisabled(page, check)).toBe(false);
+  // ...but it no longer advertises itself as actionable while activation is ignored.
+  await expect(check).toHaveAttribute("aria-disabled", "true");
+
+  // A repeated keyboard activation reaches the control and is ignored: no second POST.
+  await page.keyboard.press("Enter");
+  await expect.poll(() => held.posts()).toBe(1);
+
+  held.release();
+  await expect(page.getByText(FEEDBACK).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Next question →$|^Next unanswered →$/ })).toBeFocused();
+  expect(held.posts()).toBe(1);
+});
+
+test("an in-flight mock save keeps focus, reports unavailable and still hides correctness", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /load bundled demo material/i }).click();
+  await page.waitForURL(/\/course\/crs_/);
+  await page.getByRole("link", { name: "Mock Exam" }).click();
+  await page.getByRole("button", { name: /start mock exam/i }).click();
+  await page.waitForURL(/session=/);
+  await expect(page.getByText(/Question 1 of/)).toBeVisible();
+  await answerWithKeyboard(page);
+
+  const save = page.getByRole("button", { name: /^Save answer$/i });
+  await tabTo(page, save);
+  await expect(save).toHaveAttribute("aria-disabled", "false");
+
+  const held = await holdAnswerRequests(page);
+  await page.keyboard.press("Enter");
+  await held.reached;
+  await expect(answerControl(page)).toBeDisabled();
+
+  await expect(save).toBeFocused();
+  expect(await nativelyDisabled(page, save)).toBe(false);
+  await expect(save).toHaveAttribute("aria-disabled", "true");
+
+  await page.keyboard.press("Enter");
+  await expect.poll(() => held.posts()).toBe(1);
+  // Deferred feedback stays deferred while the save is in flight.
+  await expect(page.getByText(CORRECTNESS)).toHaveCount(0);
+
+  held.release();
+  await expect(page.getByText(/Answer saved — first answers count/i)).toBeVisible();
+  await expect(page.getByText(CORRECTNESS)).toHaveCount(0);
+  expect(held.posts()).toBe(1);
+  // Focus continues to the next unanswered question, as the runner intends after a save.
+  await expect.poll(() => focusedControl(page)).toMatch(/^Go to question \d+$|^Submit exam & see results$/);
+});
+
+test("a failed answer save restores the control and announces the error", async ({ page }) => {
+  await startDiagnostic(page);
+  await answerWithKeyboard(page);
+
+  const check = page.getByRole("button", { name: /^Check answer$/i });
+  await tabTo(page, check);
+
+  await page.route("**/api/sessions/*/answer", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Simulated answer failure" }),
+    }),
+  );
+  await page.keyboard.press("Enter");
+
+  // The failure is announced, and the control becomes actionable again for a retry.
+  await expect(page.getByRole("alert").filter({ hasText: /Simulated answer failure/ })).toBeVisible();
+  await expect(check).toBeFocused();
+  await expect(check).toHaveAttribute("aria-disabled", "false");
+  expect(await nativelyDisabled(page, check)).toBe(false);
 });
 
 test("custom radio groups expose the keyboard model their role promises", async ({ page }) => {
