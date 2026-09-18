@@ -143,6 +143,25 @@ describe("readiness aggregation", () => {
     expect(r.readiness).toBeGreaterThan(60);
   });
 
+  it("recommends review once diagnostic and mock are done with nothing weak left", () => {
+    const mastery = computeMastery(
+      "c1",
+      [1, 2, 3].map((d) => ({ conceptId: "c1", score: 1, createdAt: daysAgo(d) })),
+      concept.importance,
+      NOW,
+    );
+    const r = computeReadiness([concept], new Map([["c1", mastery]]), {
+      hasDiagnostic: true,
+      hasMock: true,
+      hasPractice: false,
+    });
+    // The `review` next action is reachable: it is what the dashboard offers after both the
+    // diagnostic and a mock exam are complete and no topic is weak.
+    expect(r.weak).toHaveLength(0);
+    expect(r.nextAction.kind).toBe("review");
+    expect(r.nextAction.href).toBe("readiness");
+  });
+
   it("down-weights untested concepts via coverage", () => {
     const mastery = computeMastery(
       "c1",

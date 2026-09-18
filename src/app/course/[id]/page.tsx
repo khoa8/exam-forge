@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Stepper } from "@/components/Stepper";
 import { MasteryBar } from "@/components/MasteryBar";
 import { MockProtectionNotice } from "@/components/MockProtectionNotice";
 import type { CourseOverview } from "@/lib/service";
+import type { NextAction } from "@/lib/types";
 
 export default function CourseDashboardPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [overview, setOverview] = useState<CourseOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
@@ -40,6 +42,43 @@ export default function CourseDashboardPage() {
     } catch (err) {
       setError((err as Error).message);
       setStarting(null);
+    }
+  }
+
+  /**
+   * Execute the computed next study action.
+   *
+   * Session kinds start that session kind; the remaining kinds are navigation actions and
+   * must go to the destination the action declares. In particular a `review` action must
+   * never be coerced into a mock exam: the button says "Review topics", so it has to perform
+   * the review/readiness action (and must not create a session, which would also conflict
+   * with an already-active mock exam).
+   */
+  function runNextAction(action: NextAction) {
+    switch (action.kind) {
+      case "diagnostic":
+        void startSession("diagnostic");
+        return;
+      case "practice":
+        void startSession("practice", action.conceptId);
+        return;
+      case "mock":
+        void startSession("mock");
+        return;
+      case "review":
+        // The action declares where reviewing happens (the readiness page today).
+        router.push(`/course/${id}/${action.href}`);
+        return;
+      case "material":
+        // The Material step is the course dashboard itself (see Stepper).
+        router.push(`/course/${id}`);
+        return;
+      default: {
+        // Compile-time exhaustiveness: a new NextAction kind must be dispatched deliberately
+        // instead of leaving a silently inert or coerced call to action.
+        const unhandled: never = action.kind;
+        return unhandled;
+      }
     }
   }
 
@@ -89,10 +128,7 @@ export default function CourseDashboardPage() {
           <p className="text-lg font-semibold mt-1">{nextAction.message}</p>
         </div>
         <button
-          onClick={() => {
-            const kind = nextAction.kind === "practice" ? "practice" : nextAction.kind === "mock" || nextAction.kind === "review" ? "mock" : "diagnostic";
-            void startSession(kind, nextAction.conceptId);
-          }}
+          onClick={() => runNextAction(nextAction)}
           disabled={starting !== null}
           className="px-5 py-2.5 rounded-lg bg-white text-indigo-700 font-semibold hover:bg-indigo-50 disabled:opacity-60"
         >
