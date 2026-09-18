@@ -22,12 +22,21 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const [view, setView] = useState<SessionView>(initialView);
   const [index, setIndex] = useState(0);
   const [draft, setDraft] = useState<AnswerValue | null>(initialGiven(initialView, initialView.questions[0]?.id));
-  const [feedback, setFeedback] = useState<GradeResult | null>(null);
+  // Grading feedback belongs to the question whose answer produced it. A save response can
+  // land after the learner moved on (the navigator stays usable while a request is in
+  // flight), and question-specific state must never be rendered under another question.
+  const [feedback, setFeedback] = useState<{ questionId: string; result: GradeResult } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // `questionId: null` marks a session-level error (finishing); a save error stays owned by
+  // its question and reappears when the learner returns to it.
+  const [error, setError] = useState<{ message: string; questionId: string | null } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const navRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const submitRef = useRef<HTMLButtonElement>(null);
+  // The question currently on screen, readable from async response handlers. It is updated
+  // in `goTo` — the only navigation path — rather than in an effect, so a response that
+  // resolves in the same tick as a navigation still sees the question the learner moved to.
+  const displayedQuestionIdRef = useRef<string | undefined>(initialView.questions[0]?.id);
   // A saved mock answer locks its question, so the control the learner just activated
   // stops being focusable. Hand focus to the next action instead of letting it fall back
   // to <body>. Consumed by the effect below once the refreshed view has been committed.
@@ -43,7 +52,9 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const answeredCount = view.answeredCount;
   const currentSaved = current ? Boolean(view.givenAnswers[current.id]) : false;
   const currentRevealed = current && !isMock ? view.revealed[current.id] : undefined;
-  const effectiveFeedback = feedback ?? currentRevealed ?? null;
+  const currentFeedback = current && feedback?.questionId === current.id ? feedback.result : null;
+  const effectiveFeedback = currentFeedback ?? currentRevealed ?? null;
+  const visibleError = error && (error.questionId === null || error.questionId === current?.id) ? error.message : null;
   const currentWithheld = current ? view.withheldQuestionIds.includes(current.id) : false;
   // Exactly one polite announcement per save. When grading feedback is rendered it is the
   // announcement, so the saved-answer notice stays visual-only; mock exams defer feedback
@@ -71,33 +82,43 @@ export function SessionRunner({ initialView, courseId }: Props) {
 
   async function saveAnswer() {
     if (!current || !draft || busy || currentSaved) return;
+    const answeredQuestionId = current.id;
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/sessions/${view.session.id}/answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId: current.id, answer: draft }),
+        body: JSON.stringify({ questionId: answeredQuestionId, answer: draft }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to submit answer");
       }
       const data = (await res.json()) as { grade: GradeResult | null };
-      if (data.grade) setFeedback(data.grade);
+      if (data.grade) setFeedback({ questionId: answeredQuestionId, result: data.grade });
       const refreshed = (await (await fetch(`/api/sessions/${view.session.id}`)).json()) as SessionView;
-      if (isMock && refreshed.givenAnswers[current.id]) focusNextActionAfterSave.current = true;
+      // Hand focus on only when the saved question is still the one on screen. If the
+      // learner navigated away, the control they activated is gone and focus already moved
+      // to the new question card, so this response must not move it again.
+      if (
+        isMock &&
+        refreshed.givenAnswers[answeredQuestionId] &&
+        displayedQuestionIdRef.current === answeredQuestionId
+      ) {
+        focusNextActionAfterSave.current = true;
+      }
       setView(refreshed);
     } catch (err) {
-      setError((err as Error).message);
+      setError({ message: (err as Error).message, questionId: answeredQuestionId });
     } finally {
       setBusy(false);
     }
   }
 
   function goTo(newIndex: number) {
+    displayedQuestionIdRef.current = questions[newIndex]?.id;
     setIndex(newIndex);
-    setFeedback(null);
     setDraft(initialGiven(view, questions[newIndex]?.id));
   }
 
@@ -113,7 +134,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
       }
       setView((await res.json()) as SessionView);
     } catch (err) {
-      setError((err as Error).message);
+      setError({ message: (err as Error).message, questionId: null });
     } finally {
       setBusy(false);
     }
@@ -182,9 +203,9 @@ export function SessionRunner({ initialView, courseId }: Props) {
               This question is part of your active mock exam, so it stays locked here until you submit that exam.
             </p>
           )}
-          {error && (
+          {visibleError && (
             <p className="text-sm text-red-600" role="alert">
-              {error}
+              {visibleError}
             </p>
           )}
 
