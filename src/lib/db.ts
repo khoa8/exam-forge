@@ -392,19 +392,27 @@ export const db = {
 
   /**
    * Attempts eligible to contribute to learner-visible mastery and readiness signals.
-   * Excludes attempts from active mock exams until the mock session is completed.
+   *
+   * Two exclusions, both fail-closed:
+   * - attempts made by an active mock exam itself, until that mock is submitted;
+   * - attempts for questions an active mock currently protects (its own persisted
+   *   question IDs), so the aggregate cannot act as a correctness oracle for an
+   *   unsubmitted mock. Pass the protected IDs from the service's single definition of
+   *   mock protection; an empty list means no mock is active.
    */
-  getEligibleCourseAttempts(courseId: string): AttemptRecord[] {
-    const rows = getDb()
-      .prepare(
-        `SELECT a.concept_id, a.score, a.created_at
+  getEligibleCourseAttempts(courseId: string, excludedQuestionIds: readonly string[] = []): AttemptRecord[] {
+    const params: string[] = [courseId];
+    let sql = `SELECT a.concept_id, a.score, a.created_at
          FROM attempts a
          JOIN sessions s ON a.session_id = s.id
          WHERE a.course_id = ?
-           AND NOT (s.kind = 'mock' AND s.status = 'active')
-         ORDER BY a.created_at, a.id`,
-      )
-      .all(courseId) as Record<string, unknown>[];
+           AND NOT (s.kind = 'mock' AND s.status = 'active')`;
+    if (excludedQuestionIds.length > 0) {
+      sql += ` AND a.question_id NOT IN (${excludedQuestionIds.map(() => "?").join(", ")})`;
+      params.push(...excludedQuestionIds);
+    }
+    sql += ` ORDER BY a.created_at, a.id`;
+    const rows = getDb().prepare(sql).all(...params) as Record<string, unknown>[];
     return rows.map((r) => ({
       conceptId: r.concept_id as string,
       score: r.score as number,

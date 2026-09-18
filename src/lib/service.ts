@@ -164,7 +164,7 @@ export function getCourseOverview(courseId: string): CourseOverview {
     importance: c.importance,
   }));
 
-  const attempts = db.getEligibleCourseAttempts(courseId);
+  const attempts = db.getEligibleCourseAttempts(courseId, [...activeMockQuestionIds(courseId)]);
   const nowIso = new Date().toISOString();
   const masteryByConcept = new Map<string, MasteryState>();
   for (const concept of concepts) {
@@ -238,6 +238,21 @@ export function startSession(courseId: string, kind: SessionKind, conceptId?: st
     importance: c.importance,
   }));
   if (concepts.length === 0) throw new ConflictError("This course has no concepts to study.");
+
+  // At most one active mock exam per course. A second active mock would share the same
+  // persisted questions (sampling is deterministic per course), so its protection would
+  // withhold the first mock's post-submit review and summary — breaking the deferred-
+  // feedback product contract. Diagnostic/Practice may still coexist with a mock; only
+  // mock-on-mock is rejected. Nothing is deleted or completed here.
+  if (kind === "mock") {
+    const activeMock = db.listSessions(courseId).find((s) => s.kind === "mock" && s.status === "active");
+    if (activeMock) {
+      throw new ConflictError(
+        "A mock exam is already in progress for this course. Submit it before starting a new one.",
+      );
+    }
+  }
+
   const questions: Question[] = db.getQuestions(courseId).map((q) => JSON.parse(q.payloadJson));
 
   let picked: Question[];
@@ -276,7 +291,7 @@ export function startSession(courseId: string, kind: SessionKind, conceptId?: st
 }
 
 function weakestConceptId(courseId: string, concepts: Concept[]): string {
-  const attempts = db.getEligibleCourseAttempts(courseId);
+  const attempts = db.getEligibleCourseAttempts(courseId, [...activeMockQuestionIds(courseId)]);
   const nowIso = new Date().toISOString();
   let worst = concepts[0];
   let worstMastery = 2;
@@ -298,9 +313,52 @@ export interface SessionView {
   givenAnswers: Record<string, AnswerValue>;
   /** For diagnostic/practice: grades revealed as answered. For mock: hidden until finish. */
   revealed: Record<string, GradeResult>;
+  /**
+   * Questions of this session whose answer-bearing feedback is withheld because they
+   * belong to an active (unsubmitted) mock exam in the same course. Answers recorded
+   * before that mock started stay stored (first answer counts) and their feedback
+   * reappears once the mock is submitted; new answers to these questions are rejected
+   * while the mock is active.
+   */
+  withheldQuestionIds: string[];
   answeredCount: number;
   review: SessionReviewItem[] | null;
   summary: SessionSummary | null;
+}
+
+/**
+ * Question IDs protected by an active (unsubmitted) mock exam in this course.
+ *
+ * This is the single definition of mock protection. While a mock is active:
+ * - no other session may grade its questions or disclose their correctness, answer key,
+ *   explanation or answer-equivalent topic; and
+ * - course-level mastery/readiness must not derive correctness from attempts for those
+ *   questions, otherwise the aggregate becomes an oracle for the unsubmitted mock.
+ *
+ * A course normally has at most one active mock (`startSession` enforces it). Databases
+ * written before that lifecycle rule can hold more than one, so the sets are unioned —
+ * the fail-closed behaviour for that legacy state.
+ */
+function activeMockQuestionIds(courseId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const session of db.listSessions(courseId)) {
+    if (session.kind === "mock" && session.status === "active") {
+      for (const questionId of session.questionIds) ids.add(questionId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Questions protected from the point of view of one session. The active mock itself owns
+ * its questions (it defers feedback rather than withholding it), so it is unrestricted.
+ */
+function protectedQuestionIds(
+  courseId: string,
+  session: { kind: string; status: string },
+): Set<string> {
+  if (session.kind === "mock" && session.status === "active") return new Set<string>();
+  return activeMockQuestionIds(courseId);
 }
 
 export function getSessionView(sessionId: string): SessionView {
@@ -310,6 +368,9 @@ export function getSessionView(sessionId: string): SessionView {
   const byId = new Map(allQuestions.map((q) => [q.id, q]));
   const sessionQuestions = session.questionIds.map((id) => byId.get(id)).filter((q): q is Question => Boolean(q));
 
+  const protectedIds = protectedQuestionIds(session.courseId, session);
+  const withheldQuestionIds = sessionQuestions.filter((q) => protectedIds.has(q.id)).map((q) => q.id);
+
   const attempts = db.getSessionAttempts(sessionId);
   const revealed: Record<string, GradeResult> = {};
   const givenAnswers: Record<string, AnswerValue> = {};
@@ -317,12 +378,17 @@ export function getSessionView(sessionId: string): SessionView {
   for (const q of sessionQuestions) {
     const at = attempts.find((a) => a.questionId === q.id);
     if (at) {
+      // The learner's own answer is never the answer key, so it stays visible even
+      // while the question's feedback is withheld.
       const saved = JSON.parse(at.answerJson) as AnswerValue;
       givenAnswers[q.id] = saved;
+      if (protectedIds.has(q.id)) continue;
       const result = gradeAnswer(q, saved);
       revealed[q.id] = result;
       review.push({ question: q, userAnswer: saved, result });
-    } else {
+    } else if (!protectedIds.has(q.id)) {
+      // Review items embed the persisted question, so withheld questions are omitted
+      // entirely rather than shipped with a stripped result.
       review.push({ question: q, userAnswer: null, result: null });
     }
   }
@@ -338,6 +404,7 @@ export function getSessionView(sessionId: string): SessionView {
       sessionKind,
       sessionStatus,
       isAnswered,
+      answerProtected: protectedIds.has(q.id),
     });
   });
 
@@ -356,9 +423,12 @@ export function getSessionView(sessionId: string): SessionView {
     givenAnswers,
     // Mock exams hide correctness until submitted.
     revealed: completed || !isMock ? revealed : {},
+    withheldQuestionIds,
     answeredCount: attempts.length,
     review: completed ? review : null,
-    summary: completed ? summarize(session, sessionQuestions, attempts) : null,
+    // A summary aggregates correctness across the whole session, so it is withheld
+    // while any of its questions is protected by an active mock exam.
+    summary: completed && withheldQuestionIds.length === 0 ? summarize(session, sessionQuestions, attempts) : null,
   };
 }
 
@@ -367,6 +437,15 @@ export function answerQuestion(sessionId: string, questionId: string, answer: An
   if (!session) throw new NotFoundError("Session");
   if (session.status === "completed") throw new ConflictError("This session is already completed.");
   if (!session.questionIds.includes(questionId)) throw new NotFoundError("Question in this session");
+
+  // Cross-session mock protection: a question that belongs to an active mock exam is
+  // graded only by that mock. Rejecting the write keeps the failure honest and prevents
+  // this session from recording an answer whose feedback would reveal the mock's key.
+  if (protectedQuestionIds(session.courseId, session).has(questionId)) {
+    throw new ConflictError(
+      "This question is part of an active mock exam. Submit the mock exam before answering it in another session.",
+    );
+  }
 
   const allQuestions = db.getQuestions(session.courseId).map((q) => JSON.parse(q.payloadJson) as Question);
   const question = allQuestions.find((q) => q.id === questionId);
@@ -457,13 +536,19 @@ export interface QuestionPresentationContext {
   sessionKind: SessionKind;
   sessionStatus: "active" | "completed";
   isAnswered: boolean;
+  /** True while an active mock exam in this course protects the question's answer key. */
+  answerProtected: boolean;
 }
 
 /**
  * Determine whether a question's topic/concept name is safe to disclose to the client.
- * Fail-closed: answer-equivalent term-recall questions are withheld until safe.
+ * Fail-closed: answer-equivalent term-recall questions are withheld until safe, and an
+ * active mock exam's answer-key protection always wins.
  */
 export function isConceptNameSafe(q: Question, context: QuestionPresentationContext): boolean {
+  if (context.answerProtected) {
+    return false;
+  }
   if (!isShortAnswerEquivalentToConcept(q, q.conceptName)) {
     return true;
   }

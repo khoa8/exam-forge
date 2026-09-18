@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Stepper } from "@/components/Stepper";
 import { MasteryBar } from "@/components/MasteryBar";
+import { MockProtectionNotice } from "@/components/MockProtectionNotice";
 import type { CourseOverview } from "@/lib/service";
 
 export default function ReadinessPage() {
@@ -102,6 +103,7 @@ export default function ReadinessPage() {
 
       <section className="space-y-3">
         <h2 className="font-semibold text-lg">Concept mastery (highest review priority first)</h2>
+        <MockProtectionNotice active={overview.activeSession?.kind === "mock"} />
         <div className="bg-white border rounded-xl divide-y">
           {ordered.map((m) => (
             <div key={m.conceptId} className="px-4 py-3 space-y-1.5">

@@ -130,6 +130,21 @@ describe("F-02 remediation: active mock attempts excluded from mastery/readiness
     const mockView = getSessionView(mock.id);
     expect(mockView.questions.length).toBeGreaterThanOrEqual(6);
 
+    // Reference state for the active-mock window. Starting a mock also withdraws the
+    // attempts it protects from learner-visible mastery/readiness (course-level mock
+    // protection: the aggregate must not reveal a protected question's correctness), so
+    // the freeze below is measured from the state immediately after the mock starts.
+    // Those attempts stay persisted and become eligible again when the mock is submitted.
+    const frozenConceptSnapshots = snapshotConcepts(getCourseOverview(courseId));
+    const frozenReadinessSnapshot = snapshotReadiness(getCourseOverview(courseId));
+    const baselineTotalAttempts = baselineConceptSnapshots.reduce((acc, c) => acc + c.attempts, 0);
+    const protectedDiagnosticAttempts = db
+      .getSessionAttempts(diagnostic.id)
+      .filter((a) => mock.questionIds.includes(a.questionId)).length;
+    expect(frozenConceptSnapshots.reduce((acc, c) => acc + c.attempts, 0)).toBe(
+      baselineTotalAttempts - protectedDiagnosticAttempts,
+    );
+
     // Pick first question in mock to answer correctly.
     const q1 = mockView.questions[0];
     const p1 = persistedQuestions.find((p) => p.id === q1.id)!;
@@ -145,10 +160,11 @@ describe("F-02 remediation: active mock attempts excluded from mastery/readiness
     expect(res1.grade).toBeNull();
 
     // 6. Fetch getCourseOverview() while mock is active.
-    // 7. Verify all correctness-derived signals remain frozen at baseline.
+    // 7. Verify all correctness-derived signals remain frozen: answering the mock exam
+    //    must not move any learner-visible signal.
     let activeOverview = getCourseOverview(courseId);
-    assertConceptMasteryUnchanged(snapshotConcepts(activeOverview), baselineConceptSnapshots);
-    expect(snapshotReadiness(activeOverview)).toEqual(baselineReadinessSnapshot);
+    assertConceptMasteryUnchanged(snapshotConcepts(activeOverview), frozenConceptSnapshots);
+    expect(snapshotReadiness(activeOverview)).toEqual(frozenReadinessSnapshot);
     // Allowed active session metadata: answered count increments on session list.
     const activeMockListItem = activeOverview.sessions.find((s) => s.id === mock.id)!;
     expect(activeMockListItem.answered).toBe(1);
@@ -168,21 +184,26 @@ describe("F-02 remediation: active mock attempts excluded from mastery/readiness
     const res2 = answerQuestion(mock.id, q2.id, wrongAns2);
     expect(res2.grade).toBeNull();
 
-    // 9. Verify signals still remain completely frozen at baseline.
+    // 9. Verify signals still remain completely frozen for the whole active-mock window.
     activeOverview = getCourseOverview(courseId);
-    assertConceptMasteryUnchanged(snapshotConcepts(activeOverview), baselineConceptSnapshots);
-    expect(snapshotReadiness(activeOverview)).toEqual(baselineReadinessSnapshot);
+    assertConceptMasteryUnchanged(snapshotConcepts(activeOverview), frozenConceptSnapshots);
+    expect(snapshotReadiness(activeOverview)).toEqual(frozenReadinessSnapshot);
 
     // 10. Reopen database from disk to confirm attempts are persisted but still excluded.
     setDbPathForTests(dbFile);
     // Raw attempts exist in DB for resume / first-answer semantics.
     expect(db.getSessionAttempts(mock.id)).toHaveLength(2);
+    // The db-level query without exclusions only drops the active mock's own attempts;
+    // the service additionally excludes the questions that mock currently protects.
     expect(db.getEligibleCourseAttempts(courseId).length).toBe(
       db.getCourseAttempts(courseId).length - 2,
     );
+    expect(db.getEligibleCourseAttempts(courseId, mock.questionIds).length).toBe(
+      db.getCourseAttempts(courseId).length - 2 - protectedDiagnosticAttempts,
+    );
     const reopenedOverview = getCourseOverview(courseId);
-    assertConceptMasteryUnchanged(snapshotConcepts(reopenedOverview), baselineConceptSnapshots);
-    expect(snapshotReadiness(reopenedOverview)).toEqual(baselineReadinessSnapshot);
+    assertConceptMasteryUnchanged(snapshotConcepts(reopenedOverview), frozenConceptSnapshots);
+    expect(snapshotReadiness(reopenedOverview)).toEqual(frozenReadinessSnapshot);
 
     // Answer the rest of the mock questions so it can be completed cleanly.
     for (let i = 2; i < mockView.questions.length; i++) {

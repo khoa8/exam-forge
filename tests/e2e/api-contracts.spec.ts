@@ -516,3 +516,229 @@ test.describe("diagnostic completion invariant API contract", () => {
     expect(repeatFinishRes.status()).toBe(200);
   });
 });
+
+interface SessionQuestionView {
+  id: string;
+  type: string;
+  options?: { id: string }[];
+  conceptName?: string;
+  correctOptionId?: unknown;
+  correctAnswer?: unknown;
+  modelAnswer?: unknown;
+  explanation?: unknown;
+}
+
+interface SessionViewBody {
+  session: { id: string; status: string };
+  questions: SessionQuestionView[];
+  revealed: Record<string, unknown>;
+  withheldQuestionIds: string[];
+  review: { question: { id: string } }[] | null;
+  summary: { correct: number } | null;
+}
+
+async function startSessionOfKind(
+  request: APIRequestContext,
+  courseId: string,
+  kind: "diagnostic" | "practice" | "mock",
+  conceptId?: string,
+) {
+  const res = await postJson(request, `/api/courses/${courseId}/sessions`, { kind, conceptId });
+  expect(res.status()).toBe(201);
+  return ((await res.json()) as { session: { id: string; questionIds: string[] } }).session;
+}
+
+interface CourseOverviewBody {
+  concepts: { id: string; mastery: { attempts: number; correct: number; status: string } }[];
+  sessions: { id: string; kind: string; status: string }[];
+  activeSession: { id: string; kind: string } | null;
+}
+
+async function getCourseOverviewBody(request: APIRequestContext, courseId: string): Promise<CourseOverviewBody> {
+  const res = await request.get(`/api/courses/${courseId}`);
+  expect(res.status()).toBe(200);
+  return (await res.json()) as CourseOverviewBody;
+}
+
+async function answerEveryQuestion(request: APIRequestContext, sessionId: string, questions: SessionQuestionView[]) {
+  for (const q of questions) {
+    const res = await postJson(request, `/api/sessions/${sessionId}/answer`, {
+      questionId: q.id,
+      answer: answerForQuestion(q),
+    });
+    expect(res.status()).toBe(200);
+  }
+}
+
+/**
+ * A completed Diagnostic followed by a mock that protects at least one of the same
+ * persisted questions — the reachable setup for the course-level aggregate question.
+ */
+async function findCompletedDiagnosticOverlap(request: APIRequestContext) {
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const courseId = await createSampleCourse(request);
+    const diagnostic = await startSessionOfKind(request, courseId, "diagnostic");
+    const diagnosticView = await getSessionViewBody(request, diagnostic.id);
+    await answerEveryQuestion(request, diagnostic.id, diagnosticView.questions);
+    expect((await request.post(`/api/sessions/${diagnostic.id}/finish`)).status()).toBe(200);
+    const beforeMock = await getCourseOverviewBody(request, courseId);
+
+    const mock = await startSessionOfKind(request, courseId, "mock");
+    const inMock = new Set(mock.questionIds);
+    const overlap = diagnostic.questionIds.filter((id) => inMock.has(id));
+    if (overlap.length > 0) return { courseId, diagnostic, mock, overlap, beforeMock };
+  }
+  throw new Error("No reachable completed-diagnostic overlap with a mock exam was reproduced");
+}
+
+test.describe("active mock exam lifecycle and course-level signals", () => {
+  test("a second active mock for the same course is rejected with 409 and creates no session", async ({ request }) => {
+    const courseId = await createSampleCourse(request);
+    const mockA = await startSessionOfKind(request, courseId, "mock");
+
+    const second = await postJson(request, `/api/courses/${courseId}/sessions`, { kind: "mock" });
+    expect(second.status()).toBe(409);
+    const secondBody = (await second.json()) as { error: string };
+    expect(secondBody.error).toMatch(/already in progress/i);
+    expect(JSON.stringify(secondBody)).not.toMatch(SAFE_ERROR_PATTERN);
+
+    // No second mock row exists, and the first mock is untouched.
+    const course = await getCourseOverviewBody(request, courseId);
+    expect(course.sessions.filter((s) => s.kind === "mock")).toHaveLength(1);
+    expect(course.activeSession).toEqual({ id: mockA.id, kind: "mock" });
+
+    // Diagnostic/Practice may still coexist with the active mock.
+    await startSessionOfKind(request, courseId, "diagnostic");
+
+    // The active mock keeps deferred feedback, then a complete post-submit review.
+    const mockView = await getSessionViewBody(request, mockA.id);
+    const deferred = await postJson(request, `/api/sessions/${mockA.id}/answer`, {
+      questionId: mockView.questions[0].id,
+      answer: answerForQuestion(mockView.questions[0]),
+    });
+    expect(deferred.status()).toBe(200);
+    expect(((await deferred.json()) as { grade: unknown }).grade).toBeNull();
+    await answerEveryQuestion(request, mockA.id, mockView.questions);
+    expect((await request.post(`/api/sessions/${mockA.id}/finish`)).status()).toBe(200);
+    const finishedA = await getSessionViewBody(request, mockA.id);
+    expect(finishedA.session.status).toBe("completed");
+    expect(finishedA.withheldQuestionIds).toEqual([]);
+    expect(finishedA.review).toHaveLength(mockView.questions.length);
+    expect(finishedA.summary).not.toBeNull();
+
+    // A new mock can be started once the previous one is completed.
+    const mockB = await startSessionOfKind(request, courseId, "mock");
+    expect(mockB.id).not.toBe(mockA.id);
+  });
+
+  test("course overview withdraws attempts for protected questions from learner-visible mastery", async ({ request }) => {
+    const { courseId, diagnostic, mock, overlap, beforeMock } = await findCompletedDiagnosticOverlap(request);
+
+    // Before the mock: every diagnostic attempt is eligible.
+    expect(beforeMock.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0)).toBe(diagnostic.questionIds.length);
+
+    // While the mock is active, the attempts it protects are withdrawn, so the aggregate
+    // cannot reveal whether the learner's saved answer for those questions was correct.
+    const duringMock = await getCourseOverviewBody(request, courseId);
+    expect(duringMock.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0)).toBe(
+      diagnostic.questionIds.length - overlap.length,
+    );
+    expect(duringMock.concepts.some((c) => c.mastery.status === "untested")).toBe(true);
+
+    // Submitting the mock restores the legitimate history plus the mock's own attempts.
+    const mockView = await getSessionViewBody(request, mock.id);
+    await answerEveryQuestion(request, mock.id, mockView.questions);
+    expect((await request.post(`/api/sessions/${mock.id}/finish`)).status()).toBe(200);
+
+    const afterSubmit = await getCourseOverviewBody(request, courseId);
+    expect(afterSubmit.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0)).toBe(
+      diagnostic.questionIds.length + mock.questionIds.length,
+    );
+  });
+});
+
+async function getSessionViewBody(request: APIRequestContext, sessionId: string): Promise<SessionViewBody> {
+  const res = await request.get(`/api/sessions/${sessionId}`);
+  expect(res.status()).toBe(200);
+  return (await res.json()) as SessionViewBody;
+}
+
+function answerForQuestion(q: SessionQuestionView) {
+  if (q.type === "mcq") return { type: "option", optionId: q.options![0].id };
+  if (q.type === "truefalse") return { type: "boolean", value: true };
+  return { type: "text", text: "sample answer" };
+}
+
+/**
+ * Find a real course whose deterministic sampling gives a mock and a diagnostic a shared
+ * question (sampling is seeded on the randomly generated course id, so this is bounded
+ * but not guaranteed on the first attempt).
+ */
+async function findOverlappingMockAndDiagnostic(request: APIRequestContext) {
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const courseId = await createSampleCourse(request);
+    const mock = await startSessionOfKind(request, courseId, "mock");
+    const diagnostic = await startSessionOfKind(request, courseId, "diagnostic");
+    const inMock = new Set(mock.questionIds);
+    const overlap = diagnostic.questionIds.filter((id) => inMock.has(id));
+    if (overlap.length > 0) return { courseId, mock, diagnostic, overlappingId: overlap[0] };
+  }
+  throw new Error("No reachable mock/diagnostic question overlap was reproduced");
+}
+
+test.describe("active mock exam isolation API contract", () => {
+  test("a concurrent session cannot disclose an active mock exam's answer key", async ({ request }) => {
+    const { mock, diagnostic, overlappingId } = await findOverlappingMockAndDiagnostic(request);
+
+    // The other session's view withholds the shared question rather than shipping its key.
+    const diagView = await getSessionViewBody(request, diagnostic.id);
+    expect(diagView.withheldQuestionIds).toContain(overlappingId);
+    expect(diagView.revealed[overlappingId]).toBeUndefined();
+    expect(diagView.review).toBeNull();
+    const clientQ = diagView.questions.find((q) => q.id === overlappingId)!;
+    expect(clientQ).toBeDefined();
+    for (const field of ["correctOptionId", "correctAnswer", "modelAnswer", "explanation", "acceptedAnswers", "keyTerms"]) {
+      expect(Object.keys(clientQ as Record<string, unknown>)).not.toContain(field);
+    }
+
+    // Answering it through the other session is an honest, safe 409 — and records nothing.
+    const rejected = await postJson(request, `/api/sessions/${diagnostic.id}/answer`, {
+      questionId: overlappingId,
+      answer: answerForQuestion(clientQ),
+    });
+    expect(rejected.status()).toBe(409);
+    const rejectedBody = (await rejected.json()) as { error: string };
+    expect(rejectedBody.error).toMatch(/active mock exam/i);
+    expect(JSON.stringify(rejectedBody)).not.toMatch(SAFE_ERROR_PATTERN);
+    expect((await getSessionViewBody(request, diagnostic.id)).revealed[overlappingId]).toBeUndefined();
+
+    // The mock itself still defers feedback and protects its own questions.
+    const mockView = await getSessionViewBody(request, mock.id);
+    expect(mockView.withheldQuestionIds).toEqual([]);
+    expect(mockView.revealed).toEqual({});
+    const mockAnswer = await postJson(request, `/api/sessions/${mock.id}/answer`, {
+      questionId: overlappingId,
+      answer: answerForQuestion(mockView.questions.find((q) => q.id === overlappingId)!),
+    });
+    expect(mockAnswer.status()).toBe(200);
+    expect(((await mockAnswer.json()) as { grade: unknown }).grade).toBeNull();
+
+    // Submitting the mock releases the protection: the question is answerable again.
+    for (const q of mockView.questions) {
+      await postJson(request, `/api/sessions/${mock.id}/answer`, {
+        questionId: q.id,
+        answer: answerForQuestion(q),
+      });
+    }
+    expect((await request.post(`/api/sessions/${mock.id}/finish`)).status()).toBe(200);
+
+    const released = await getSessionViewBody(request, diagnostic.id);
+    expect(released.withheldQuestionIds).toEqual([]);
+    const accepted = await postJson(request, `/api/sessions/${diagnostic.id}/answer`, {
+      questionId: overlappingId,
+      answer: answerForQuestion(clientQ),
+    });
+    expect(accepted.status()).toBe(200);
+    expect(((await accepted.json()) as { grade: unknown }).grade).not.toBeNull();
+  });
+});

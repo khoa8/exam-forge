@@ -70,7 +70,22 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
 2. **First answer counts** — enforced by a SQLite UNIQUE constraint; retries cannot
    improve a score.
 3. **Mock exams hide correctness until submission** — the API returns `grade: null`
-   during mock sessions (tested).
+   during mock sessions (tested). That protection belongs to the mock's *questions*, not
+   to the mock's own response: while a mock is unsubmitted, no other session in the same
+   course may grade those questions or disclose their correctness, answer key,
+   explanation or answer-equivalent topic — whether that other session is a concurrent
+   Diagnostic/Practice session or a session that already answered the same persisted
+   question. Such views report the withheld questions and withhold the session summary,
+   which aggregates correctness; answering one through another session is rejected with a
+   `409` conflict. Course-level signals follow the same rule: attempts for protected
+   questions are excluded from every learner-visible derivative (mastery, status,
+   confidence, review priority, weak/strong/untested classification, next action and
+   practice target selection) so the aggregate cannot become a correctness oracle, while
+   the stored attempts are untouched and count normally again once the mock is submitted.
+   At most one mock exam may be active per course — a second mock would protect the same
+   deterministic question set and withhold the first mock's post-submit review, so
+   `startSession` rejects it with a `409` conflict while Diagnostic/Practice coexistence
+   stays allowed (tested).
 4. **Generated content crosses one shared trust boundary** — every candidate goes
    through `validateQuestionSet`, which first parses it against the canonical zod
    schemas (runtime validation, not TypeScript casts) and then applies the semantic
