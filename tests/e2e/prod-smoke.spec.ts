@@ -4,7 +4,8 @@ import { expect, test } from "@playwright/test";
  * Production smoke test: the minimum meaningful path against a real production
  * build/start server (started by playwright.prod-smoke.config.ts):
  *   build starts -> health responds -> home loads -> bundled demo enters the
- *   actual learning path (course created, concepts extracted, diagnostic runs).
+ *   actual learning path (course created, concepts extracted, diagnostic runs)
+ *   and hands keyboard focus to the served question.
  * Deterministic local generation; no key and no network.
  */
 
@@ -32,4 +33,11 @@ test("production build: health, home and bundled demo diagnostic", async ({ page
   await page.getByRole("button", { name: /start diagnostic/i }).click();
   await page.waitForURL(/session=/);
   await expect(page.getByText(/Question 1 of/)).toBeVisible();
+
+  // 5. Starting the session replaces the start control, so focus must land on the
+  //    question rather than falling back to <body>. This is asserted against the
+  //    production build on purpose: in dev mode React StrictMode re-runs the runner's
+  //    focus effect on mount, which masks a regression here.
+  await expect(page.locator("body")).not.toBeFocused();
+  await expect(page.getByRole("group", { name: "Current question" })).toBeFocused();
 });

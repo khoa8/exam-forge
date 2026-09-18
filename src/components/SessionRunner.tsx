@@ -26,7 +26,12 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const skipInitialFocus = useRef(true);
+  const navRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const submitRef = useRef<HTMLButtonElement>(null);
+  // A saved mock answer locks its question, so the control the learner just activated
+  // stops being focusable. Hand focus to the next action instead of letting it fall back
+  // to <body>. Consumed by the effect below once the refreshed view has been committed.
+  const focusNextActionAfterSave = useRef(false);
 
   const questions = view.questions;
   const finished = view.session.status === "completed";
@@ -40,15 +45,29 @@ export function SessionRunner({ initialView, courseId }: Props) {
   const currentRevealed = current && !isMock ? view.revealed[current.id] : undefined;
   const effectiveFeedback = feedback ?? currentRevealed ?? null;
   const currentWithheld = current ? view.withheldQuestionIds.includes(current.id) : false;
+  // Exactly one polite announcement per save. When grading feedback is rendered it is the
+  // announcement, so the saved-answer notice stays visual-only; mock exams defer feedback
+  // until submission, so there the saved-answer notice is the announcement.
+  const announcesFeedback = effectiveFeedback !== null && !isMock;
 
-  // Keep keyboard/screen-reader context on the question card after navigation.
+  // Keep keyboard/screen-reader context on the question card whenever the runner appears
+  // or moves to another question. Mounting the runner replaces the intro's start control
+  // (and a finished runner is replaced by the results view), so without this the focused
+  // control disappears and focus falls back to <body>. A passive refresh of the session
+  // view does not change `index` and therefore never steals focus.
   useEffect(() => {
-    if (skipInitialFocus.current) {
-      skipInitialFocus.current = false;
-      return;
-    }
     cardRef.current?.focus();
   }, [index]);
+
+  // Restore keyboard context after a mock answer is saved: continue at the next
+  // unanswered question, or at the submit control once every question is answered.
+  useEffect(() => {
+    if (!focusNextActionAfterSave.current) return;
+    focusNextActionAfterSave.current = false;
+    const nextUnanswered = view.questions.findIndex((q) => !view.givenAnswers[q.id]);
+    if (nextUnanswered < 0) submitRef.current?.focus();
+    else navRefs.current[nextUnanswered]?.focus();
+  }, [view]);
 
   async function saveAnswer() {
     if (!current || !draft || busy || currentSaved) return;
@@ -67,6 +86,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
       const data = (await res.json()) as { grade: GradeResult | null };
       if (data.grade) setFeedback(data.grade);
       const refreshed = (await (await fetch(`/api/sessions/${view.session.id}`)).json()) as SessionView;
+      if (isMock && refreshed.givenAnswers[current.id]) focusNextActionAfterSave.current = true;
       setView(refreshed);
     } catch (err) {
       setError((err as Error).message);
@@ -126,9 +146,15 @@ export function SessionRunner({ initialView, courseId }: Props) {
       </div>
 
       {current && (
-        <div ref={cardRef} tabIndex={-1} className="bg-white border rounded-xl p-5 sm:p-6 space-y-5 focus:outline-hidden focus-visible:outline-2 focus-visible:outline-indigo-600">
+        <div
+          ref={cardRef}
+          tabIndex={-1}
+          role="group"
+          aria-label="Current question"
+          className="bg-white border rounded-xl p-5 sm:p-6 space-y-5 focus:outline-hidden focus-visible:outline-2 focus-visible:outline-indigo-600"
+        >
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span className="bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-wide font-medium">{current.type}</span>
+            <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full uppercase tracking-wide font-medium">{current.type}</span>
             {current.conceptName ? <span>Topic: {current.conceptName}</span> : null}
             <span className="ml-auto">{current.difficulty}</span>
           </div>
@@ -147,7 +173,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
           />
 
           {currentSaved && (
-            <p className="text-xs text-slate-500" role="status">
+            <p className="text-xs text-slate-500" role={announcesFeedback ? undefined : "status"}>
               Answer saved — first answers count, so this question is locked.
             </p>
           )}
@@ -162,7 +188,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
             </p>
           )}
 
-          {effectiveFeedback && !isMock && <FeedbackPanel result={effectiveFeedback} />}
+          {announcesFeedback && effectiveFeedback ? <FeedbackPanel result={effectiveFeedback} /> : null}
 
           <div className="flex flex-wrap gap-3 justify-between items-center">
             <div className="flex gap-2">
@@ -186,9 +212,13 @@ export function SessionRunner({ initialView, courseId }: Props) {
 
             {isMock ? (
               <button
+                // See "Check answer": the in-flight state must not disable the focused
+                // control. Once saved the question is locked, and focus is handed to the
+                // next action by the effect above.
                 onClick={() => void saveAnswer()}
-                disabled={!draft || busy || currentSaved}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40"
+                disabled={!draft || currentSaved}
+                aria-disabled={busy}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40 aria-disabled:opacity-40"
               >
                 {currentSaved ? "Saved ✓" : "Save answer"}
               </button>
@@ -229,9 +259,15 @@ export function SessionRunner({ initialView, courseId }: Props) {
               </button>
             ) : (
               <button
+                // Not natively disabled while the request is in flight: disabling the
+                // control the learner just activated drops keyboard focus to <body>. The
+                // button stays focusable and reports the temporary unavailability through
+                // aria-disabled instead — which is not decoration, because `saveAnswer`'s
+                // busy guard really does ignore activation until the request settles.
                 onClick={() => void saveAnswer()}
-                disabled={!draft || busy || currentSaved}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40"
+                disabled={!draft || currentSaved}
+                aria-disabled={busy}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40 aria-disabled:opacity-40"
               >
                 Check answer
               </button>
@@ -245,6 +281,9 @@ export function SessionRunner({ initialView, courseId }: Props) {
         {questions.map((q, i) => (
           <button
             key={q.id}
+            ref={(el) => {
+              navRefs.current[i] = el;
+            }}
             onClick={() => goTo(i)}
             aria-current={i === index ? "step" : undefined}
             className={
@@ -265,6 +304,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
       {isMock && (
         <div className="border rounded-xl bg-white p-4">
           <button
+            ref={submitRef}
             onClick={() => void finish()}
             disabled={busy || !allAnswered}
             className="w-full px-4 py-3 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-40"
@@ -299,6 +339,34 @@ function initialGiven(view: SessionView, questionId: string | undefined): Answer
   return view.givenAnswers[questionId] ?? null;
 }
 
+/**
+ * Keyboard model for the custom radio groups.
+ *
+ * `role="radio"` inside `role="radiogroup"` promises the WAI-ARIA radio-group keyboard
+ * behaviour: exactly one option is in the tab order (roving tabindex) and the arrow keys
+ * move the selection. Tab and Space/Enter keep working; the roving tabindex only removes
+ * the redundant per-option tab stops.
+ */
+function radioKeyDown(
+  event: React.KeyboardEvent<HTMLButtonElement>,
+  index: number,
+  count: number,
+  refs: { current: (HTMLButtonElement | null)[] },
+  select: (index: number) => void,
+) {
+  const delta =
+    event.key === "ArrowDown" || event.key === "ArrowRight"
+      ? 1
+      : event.key === "ArrowUp" || event.key === "ArrowLeft"
+        ? -1
+        : 0;
+  if (delta === 0 || count === 0) return;
+  event.preventDefault();
+  const next = (index + delta + count) % count;
+  refs.current[next]?.focus();
+  select(next);
+}
+
 function AnswerInput({
   question,
   value,
@@ -310,24 +378,41 @@ function AnswerInput({
   onChange: (v: AnswerValue) => void;
   disabled: boolean;
 }) {
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const truthRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
   if (question.type === "mcq" && question.options) {
+    const options = question.options;
+    const selectedIndex = options.findIndex((opt) => value?.type === "option" && value.optionId === opt.id);
     return (
       <div className="space-y-2" role="radiogroup" aria-label="Answer options">
-        {question.options.map((opt) => {
-          const selected = value?.type === "option" && value.optionId === opt.id;
+        {options.map((opt, i) => {
+          const selected = i === selectedIndex;
           return (
             <button
               key={opt.id}
+              ref={(el) => {
+                optionRefs.current[i] = el;
+              }}
               role="radio"
               aria-checked={selected}
+              tabIndex={selected || (selectedIndex < 0 && i === 0) ? 0 : -1}
               disabled={disabled}
               onClick={() => onChange({ type: "option", optionId: opt.id })}
+              onKeyDown={(e) =>
+                radioKeyDown(e, i, options.length, optionRefs, (next) =>
+                  onChange({ type: "option", optionId: options[next].id }),
+                )
+              }
               className={
                 "w-full text-left px-4 py-3 rounded-lg border transition-colors " +
                 (selected ? "border-indigo-600 bg-indigo-50" : "border-slate-200 bg-white hover:border-slate-300")
               }
             >
-              <span className={"inline-block w-5 mr-2 font-medium " + (selected ? "text-indigo-600" : "text-slate-400")}>
+              <span
+                aria-hidden="true"
+                className={"inline-block w-5 mr-2 font-medium " + (selected ? "text-indigo-600" : "text-slate-500")}
+              >
                 {selected ? "●" : "○"}
               </span>
               {opt.text}
@@ -338,17 +423,26 @@ function AnswerInput({
     );
   }
   if (question.type === "truefalse") {
+    const values = [true, false];
+    const selectedIndex = values.findIndex((v) => value?.type === "boolean" && value.value === v);
     return (
       <div className="flex gap-3" role="radiogroup" aria-label="True or false">
-        {[true, false].map((v) => {
-          const selected = value?.type === "boolean" && value.value === v;
+        {values.map((v, i) => {
+          const selected = i === selectedIndex;
           return (
             <button
               key={String(v)}
+              ref={(el) => {
+                truthRefs.current[i] = el;
+              }}
               role="radio"
               aria-checked={selected}
+              tabIndex={selected || (selectedIndex < 0 && i === 0) ? 0 : -1}
               disabled={disabled}
               onClick={() => onChange({ type: "boolean", value: v })}
+              onKeyDown={(e) =>
+                radioKeyDown(e, i, values.length, truthRefs, (next) => onChange({ type: "boolean", value: values[next] }))
+              }
               className={
                 "px-6 py-2.5 rounded-lg border font-medium " +
                 (selected ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white hover:border-slate-300")
@@ -421,6 +515,13 @@ function Finished({ view, courseId }: { view: SessionView; courseId: string }) {
   const kind = view.session.kind;
   const withheldCount = view.withheldQuestionIds.length;
   const scorePct = summary ? Math.round(summary.score * 100) : 0;
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Finishing or submitting replaces the runner, so the control that was activated is
+  // gone. Focus the results heading instead of letting focus fall back to <body>.
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
 
   const nextCta =
     kind === "diagnostic" ? (
@@ -449,7 +550,7 @@ function Finished({ view, courseId }: { view: SessionView; courseId: string }) {
   return (
     <div className="space-y-6">
       <div className="bg-white border rounded-xl p-6 space-y-3">
-        <h2 className="text-xl font-semibold">
+        <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">
           {kind === "mock" ? "Mock exam results" : kind === "diagnostic" ? "Diagnostic complete" : "Practice complete"}
         </h2>
         {summary && (
