@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Stepper } from "@/components/Stepper";
 import { MasteryBar } from "@/components/MasteryBar";
 import { MockProtectionNotice } from "@/components/MockProtectionNotice";
 import type { CourseOverview } from "@/lib/service";
+import type { NextAction } from "@/lib/types";
 
 export default function CourseDashboardPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [overview, setOverview] = useState<CourseOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
@@ -43,6 +45,47 @@ export default function CourseDashboardPage() {
     }
   }
 
+  /**
+   * The dashboard's primary call to action for the computed next action.
+   *
+   * Label and behavior are derived together, so they cannot disagree. A `mock` next action
+   * becomes a resume action while the course already has an active unsubmitted mock: at most
+   * one mock may be active per course (service invariant), so offering to create another one
+   * would be an action known in advance to fail with a 409. The study plan itself is
+   * unchanged — an active mock is still not completed evidence.
+   */
+  function nextActionCta(
+    action: NextAction,
+    activeMockId: string | null,
+  ): { label: string; run: () => void } {
+    if (action.kind === "mock" && activeMockId) {
+      return {
+        label: "Resume mock exam",
+        run: () => router.push(`/course/${id}/mock?session=${activeMockId}`),
+      };
+    }
+    switch (action.kind) {
+      case "diagnostic":
+        return { label: "Start diagnostic", run: () => void startSession("diagnostic") };
+      case "practice":
+        return { label: "Start practice", run: () => void startSession("practice", action.conceptId) };
+      case "mock":
+        return { label: "Start mock exam", run: () => void startSession("mock") };
+      case "review":
+        // The action declares where reviewing happens (the readiness page today).
+        return { label: "Review topics", run: () => router.push(`/course/${id}/${action.href}`) };
+      case "material":
+        // The Material step is the course dashboard itself (see Stepper).
+        return { label: "Back to material", run: () => router.push(`/course/${id}`) };
+      default: {
+        // Compile-time exhaustiveness: a new NextAction kind must be dispatched deliberately
+        // instead of leaving a silently inert or coerced call to action.
+        const unhandled: never = action.kind;
+        return unhandled;
+      }
+    }
+  }
+
   if (error && !overview) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-xl p-6" role="alert">
@@ -58,6 +101,7 @@ export default function CourseDashboardPage() {
   const { course, readiness, concepts } = overview;
   const hasAttempts = readiness.coverage > 0;
   const nextAction = readiness.nextAction;
+  const cta = nextActionCta(nextAction, overview.activeMockSession?.id ?? null);
 
   return (
     <div className="space-y-8">
@@ -89,22 +133,11 @@ export default function CourseDashboardPage() {
           <p className="text-lg font-semibold mt-1">{nextAction.message}</p>
         </div>
         <button
-          onClick={() => {
-            const kind = nextAction.kind === "practice" ? "practice" : nextAction.kind === "mock" || nextAction.kind === "review" ? "mock" : "diagnostic";
-            void startSession(kind, nextAction.conceptId);
-          }}
+          onClick={cta.run}
           disabled={starting !== null}
           className="px-5 py-2.5 rounded-lg bg-white text-indigo-700 font-semibold hover:bg-indigo-50 disabled:opacity-60"
         >
-          {starting !== null
-            ? "Preparing…"
-            : nextAction.kind === "diagnostic"
-              ? "Start diagnostic"
-              : nextAction.kind === "practice"
-                ? "Start practice"
-                : nextAction.kind === "mock"
-                  ? "Start mock exam"
-                  : "Review topics"}
+          {starting !== null ? "Preparing…" : cta.label}
         </button>
       </section>
 
