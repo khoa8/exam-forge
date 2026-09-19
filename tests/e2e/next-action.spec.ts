@@ -124,6 +124,16 @@ async function answerAll(
   expect(finished.ok(), `finish ${sessionId}`).toBeTruthy();
 }
 
+/** Count session-creation requests issued by the page, so "no second mock" is provable. */
+async function countSessionCreations(page: Page): Promise<() => number> {
+  let posts = 0;
+  await page.route("**/api/courses/*/sessions", async (route) => {
+    if (route.request().method() === "POST") posts += 1;
+    await route.continue();
+  });
+  return () => posts;
+}
+
 test("the review next action navigates to readiness instead of starting a mock exam", async ({ page, request }) => {
   test.setTimeout(120_000);
   const courseId = await loadDemoCourse(page);
@@ -190,4 +200,46 @@ test("diagnostic and practice next actions still start their session kinds", asy
   const session = (await sessionRes.json()) as { session: { kind: string; conceptId: string | null } };
   expect(session.session.kind).toBe("practice");
   expect(session.session.conceptId).toBe(practiceState.readiness.nextAction.conceptId);
+});
+
+test("the dashboard resumes an active mock instead of attempting a second one", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const courseId = await loadDemoCourse(page);
+  const keys = readQuestionKeys(courseId);
+
+  // Fixture: completed diagnostic with every answer correct — no weak topic, no completed
+  // mock — so the computed next action is the mock exam.
+  await answerAll(request, await startSession(request, courseId, "diagnostic"), keys, correctAnswer);
+
+  // Start a mock and leave it unsubmitted, as a learner who stops mid-exam would.
+  await page.goto(`/course/${courseId}`);
+  await page.getByRole("button", { name: "Start mock exam" }).click();
+  await expect(page).toHaveURL(new RegExp(`/course/${courseId}/mock\\?session=`));
+  const activeMockId = new URL(page.url()).searchParams.get("session")!;
+
+  // The study plan still says "mock" (an active mock is not completed evidence) while the
+  // course already has an active mock.
+  const state = await overview(request, courseId);
+  expect(state.readiness.nextAction.kind).toBe("mock");
+  expect(state.activeMockSession?.id).toBe(activeMockId);
+
+  const sessionCreations = await countSessionCreations(page);
+
+  await page.goto(`/course/${courseId}`);
+  const resume = page.getByRole("button", { name: "Resume mock exam" });
+  await expect(resume).toBeVisible();
+  // The CTA must not imply that a new mock exam will be created.
+  await expect(page.getByRole("button", { name: "Start mock exam" })).toHaveCount(0);
+  await resume.click();
+
+  // It resumes the exact mock already in progress, without creating another one and
+  // without a preventable conflict error.
+  await expect(page).toHaveURL(new RegExp(`/course/${courseId}/mock\\?session=${activeMockId}$`));
+  await expect(page.getByText(/Answer all .* questions to submit/i)).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: /already in progress/i })).toHaveCount(0);
+  expect(sessionCreations()).toBe(0);
+
+  const after = await overview(request, courseId);
+  expect(after.sessions.filter((s) => s.kind === "mock")).toHaveLength(1);
+  expect(after.activeMockSession?.id).toBe(activeMockId);
 });
