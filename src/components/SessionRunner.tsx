@@ -403,6 +403,8 @@ function AnswerInput({
 }) {
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const truthRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const hostedTextLimit = isHosted() ? 2000 : undefined;
+  const answerLength = value?.type === "text" ? value.text.length : 0;
 
   if (question.type === "mcq" && question.options) {
     const options = question.options;
@@ -480,29 +482,37 @@ function AnswerInput({
   }
   if (question.type === "short") {
     return (
-      <input
-        type="text"
-        disabled={disabled}
-        maxLength={isHosted() ? 2000 : undefined}
-        value={value?.type === "text" ? value.text : ""}
-        onChange={(e) => onChange({ type: "text", text: e.target.value })}
-        placeholder="Type the term…"
-        aria-label="Your answer"
-        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
-      />
+      <div>
+        <input
+          type="text"
+          disabled={disabled}
+          maxLength={hostedTextLimit}
+          value={value?.type === "text" ? value.text : ""}
+          onChange={(e) => onChange({ type: "text", text: e.target.value })}
+          placeholder="Type the term…"
+          aria-label="Your answer"
+          aria-describedby={hostedTextLimit ? "hosted-answer-limit" : undefined}
+          className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
+        />
+        {hostedTextLimit && <p id="hosted-answer-limit" className="mt-1 text-xs text-slate-500">{answerLength} / 2,000 characters</p>}
+      </div>
     );
   }
   return (
-    <textarea
-      disabled={disabled}
-      maxLength={isHosted() ? 2000 : undefined}
-      rows={5}
-      value={value?.type === "text" ? value.text : ""}
-      onChange={(e) => onChange({ type: "text", text: e.target.value })}
-      placeholder="Write your explanation in your own words…"
-      aria-label="Your explanation"
-      className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
-    />
+    <div>
+      <textarea
+        disabled={disabled}
+        maxLength={hostedTextLimit}
+        rows={5}
+        value={value?.type === "text" ? value.text : ""}
+        onChange={(e) => onChange({ type: "text", text: e.target.value })}
+        placeholder="Write your explanation in your own words…"
+        aria-label="Your explanation"
+        aria-describedby={hostedTextLimit ? "hosted-answer-limit" : undefined}
+        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
+      />
+      {hostedTextLimit && <p id="hosted-answer-limit" className="mt-1 text-xs text-slate-500">{answerLength} / 2,000 characters</p>}
+    </div>
   );
 }
 
