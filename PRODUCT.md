@@ -44,11 +44,12 @@ ExamForge currently supports:
 - pasted text / Markdown;
 - text-based PDF ingestion with honest extraction-quality/failure messaging;
 - multiple choice, true/false, short-answer and explanation questions;
-- deterministic, local concept/question/answer-key generation (the only generation path);
+- deterministic concept/question/answer-key generation (the only generation path);
 - diagnostic, targeted-practice and mock-exam sessions;
 - grounded feedback and source evidence;
 - explainable mastery/readiness heuristics and simple review hints;
-- local SQLite persistence for course/progress data;
+- hosted beta with anonymous browser-bound identity and learner-owned Supabase storage;
+- optional loopback-only local development mode with SQLite persistence;
 - deterministic validation before generated assessment content is accepted;
 - prompt-injection defenses treating study material as untrusted data.
 
@@ -116,18 +117,31 @@ validation strategy and user-visible explanation.
 - ExamForge supports preparation and practice, not live graded/proctored exam assistance.
 - Do not build impersonation, proctoring bypass, or covert real-time answer-delivery workflows.
 
+## Hosted beta identity and limits
+
+The public beta creates an anonymous learner identity in the current browser after
+verification. It has no email, password, OAuth, profile, backup, or account recovery.
+Clearing site data or switching browsers/devices can make the old courses inaccessible.
+Study material and progress are stored in ExamForge's hosted database for that identity.
+Deleting a course removes its material, concepts, questions, sessions, and attempts.
+
+The beta accepts up to 10 courses per browser identity and five course-generation
+attempts per hour. Pasted or extracted text is limited to 200,000 characters; text-based
+PDF uploads are limited to 20 MB. Material that cannot produce grounded assessment
+content fails honestly. These bounds keep the free public service usable.
+
 ## Privacy
 
 Study material may be private or copyrighted.
 
 - Avoid unnecessary retention or logging of study content.
 - Do not publish or reuse private user material as demos/fixtures.
-- Generation is local and deterministic: the current app does not send study material to
-  external AI services. Reintroducing any external AI processing would require a new
+- Generation is deterministic in ExamForge's own runtime: the app does not send study
+  material to external AI services. Reintroducing any external AI processing would require a new
   explicit product decision with correctness/privacy validation.
-- The application is local-first: servers bind to loopback (127.0.0.1) by default, so
-  material and progress are not reachable from other machines.
-- Preserve clear delete/clear behavior for locally stored course data.
+- The hosted beta stores material and progress remotely; the optional local mode binds to
+  loopback (127.0.0.1) and stores its data in local SQLite.
+- Preserve clear course deletion behavior in both modes.
 - Bundled demo material must be safe to redistribute.
 
 ## Long-term scope boundaries

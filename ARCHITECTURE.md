@@ -1,8 +1,15 @@
 # ARCHITECTURE.md — ExamForge
 
-A modular monolith: Next.js 15 (App Router) + TypeScript + SQLite (`node:sqlite`).
-Everything runs in one process; module boundaries keep the learning-loop logic testable
-without a browser or server.
+ExamForge has two deployment entrypoints over shared deterministic learning modules:
+
+- **Hosted beta:** Vite-built React assets on Cloudflare Workers Static Assets;
+  Supabase Auth creates anonymous browser identities; one Supabase Edge Function runs
+  the assessment service over learner-owned Supabase Postgres data.
+- **Local:** Next.js 15 App Router and `node:sqlite` on loopback. This remains useful
+  for offline development and single-user use.
+
+The domain/service modules remain a modular monolith. The hosted Edge Function is one
+server boundary for the existing service rules, not a second implementation of them.
 
 ## Module map
 
@@ -23,6 +30,10 @@ src/
 │   ├── ingest.ts       # Text/PDF ingestion with honest quality warnings
 │   ├── db.ts           # SQLite persistence (node:sqlite, WAL), schema migrations
 │   ├── service.ts      # Orchestration: courses, sessions, answers, views
+│   ├── hosted-db.ts    # Owner-scoped Postgres access for the hosted service
+│   ├── hosted-service.ts # Async orchestration using shared assessment modules
+│   ├── presentation.ts # Shared answer-key stripping and summaries
+│   ├── api-client.ts   # Hosted authenticated API / local same-origin transport
 │   ├── util.ts         # Seeded RNG, normalization, similarity metrics
 │   └── provider/
 │       ├── deterministic.ts # The only generation path: deterministic concept +
@@ -31,8 +42,13 @@ src/
 │       └── sanitize.ts      # Untrusted-material filtering: instruction-like
 │                            #   content detection for extraction/validation
 ├── app/                # Next.js routes (pages + REST API under /api)
+├── hosted/             # Vite browser entry, anonymous auth gate, route shims
 ├── components/         # Stepper, MasteryBar, SessionRunner, RunnerGate
 └── sample/material.ts  # Bundled original demo material
+
+supabase/functions/examforge/  # Single authenticated hosted API boundary
+supabase/migrations/           # Postgres schema, constraints and server-only RPCs
+wrangler.jsonc                 # Cloudflare static-asset deployment
 ```
 
 ## Data flow (learning loop)
@@ -47,7 +63,7 @@ deterministic generation (provider/deterministic.ts)
 course acceptance gate (assessment viability: ≥3 validated questions, ≥1 diagnostic-eligible)
    │
    ▼
-db.insertCourse()  (courses, concepts, questions)
+atomic insertCourse()  (courses, concepts, questions)
    │
    ▼
 startSession(kind)  ── sampler.ts balances across concepts
@@ -64,11 +80,12 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
 
 ## Key invariants
 
-1. **No answer key reaches the client while a session is active** — `service.ts` strips
+1. **No answer key reaches the client while a session is active** — shared `presentation.ts` strips
    `correctOptionId`, `correctAnswer`, `acceptedAnswers`, `keyTerms`, `modelAnswer`, and
    `explanation` from every question sent to the browser (tested).
-2. **First answer counts** — enforced by a SQLite UNIQUE constraint; retries cannot
-   improve a score.
+2. **First answer counts** — enforced by a unique `(session_id, question_id)`
+   constraint in both databases; Postgres serializes answer and finish transitions
+   with a session row lock. Retries cannot improve a score.
 3. **Mock exams hide correctness until submission** — the API returns `grade: null`
    during mock sessions (tested). That protection belongs to the mock's *questions*, not
    to the mock's own response: while a mock is unsubmitted, no other session in the same
@@ -85,7 +102,8 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    At most one mock exam may be active per course — a second mock would protect the same
    deterministic question set and withhold the first mock's post-submit review, so
    `startSession` rejects it with a `409` conflict while Diagnostic/Practice coexistence
-   stays allowed (tested).
+   stays allowed. Hosted Postgres also enforces this with a partial unique index and
+   serializes mock starts with submissions using a course advisory lock.
 4. **Generated content crosses one shared trust boundary** — every candidate goes
    through `validateQuestionSet`, which first parses it against the canonical zod
    schemas (runtime validation, not TypeScript casts) and then applies the semantic
@@ -127,7 +145,46 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    or provider fallback exists in the runtime. Stale provider environment variables are
    inert, and generation makes no outbound requests (tested).
 
-## Persistence
+## Hosted persistence and security boundary
+
+The browser holds a Supabase anonymous session in site storage. The public Supabase
+publishable key and Cloudflare Turnstile site key are browser configuration, never
+authorization. First visits solve Turnstile, then Supabase Auth issues an anonymous
+JWT; the same browser reuses its session. The Edge Function verifies each bearer JWT
+with Supabase Auth before instantiating `HostedDb` for that user's ID. Personalized
+responses use `private, no-store`, and the Cloudflare deployment serves only static
+assets; no personalized content is cached there.
+
+Postgres tables `ef_courses`, `ef_concepts`, `ef_questions`, `ef_sessions`, and
+`ef_attempts` hold hosted study state. Courses have an `owner_id` referencing
+`auth.users`; all child rows derive ownership through the course foreign key.
+Every public ID path in `HostedDb` checks course ownership before privileged reads or
+writes. The Supabase secret key exists only in the Edge Function secret store and is
+used to call PostgREST as the service role. It is absent from browser bundles and Git.
+
+RLS is enabled on all hosted tables. Authenticated learners have only owner-scoped
+read grants/policies on courses and concepts. They have no direct question, session,
+attempt, or server RPC grants; the answer-bearing question payload is server-only.
+The service role bypasses RLS, so its API boundary performs explicit owner checks.
+Untrusted request bodies are validated before service calls, and question candidates
+pass the same deterministic validation as the local mode.
+
+`ef_create_course` inserts the course, concepts, and questions in one transaction and
+serializes the ten-course quota per owner. A separate per-owner row lock limits course
+generation attempts to five per hour, including failed material. `ef_start_session`
+serializes course mock starts with `ef_submit_attempt`; a partial unique index prevents
+two active mocks. `ef_submit_attempt` locks the session and uses a unique attempt key
+for first-answer semantics; `ef_finish_session` locks the session for safe completion.
+Foreign keys cascade course deletion through all derived state. Session ordering uses
+creation timestamp plus a generated sequence as a deterministic tie-breaker.
+
+Anonymous signup requires Cloudflare Turnstile and Supabase's per-IP signup limit.
+Request bodies are capped at 500 KB; material is capped at 200,000 characters, PDFs
+at 20 MB in the browser, and each anonymous identity at ten courses. The hosted beta
+has no account recovery or backup; clearing site data can strand stored courses.
+The Edge Function does not log material, answer keys, answers, or evidence quotes.
+
+## Local persistence
 
 Single SQLite file (`.data/examforge.sqlite`, override with `EXAMFORGE_DB_PATH`), via
 Node's built-in `node:sqlite` — no native dependencies. Tables: `courses`, `concepts`,
@@ -146,20 +203,26 @@ rewritten; there is no destructive reset in normal startup.
 
 ## Local network boundary
 
-ExamForge is a local, single-user application with no auth layer, so the normal dev and
-production entrypoints (`npm run dev`, `npm start`) bind the HTTP server to loopback
+The optional local mode is single-user with no auth layer, so its dev and production
+entrypoints (`npm run dev`, `npm start`) bind the HTTP server to loopback
 (`127.0.0.1`) by default. The app is not reachable from other machines unless a user
-deliberately overrides the host. There is no account/auth subsystem; the loopback default
-plus local SQLite is the privacy boundary. `/api/health` returns only `{ ok: true }` — no
-local paths or material-derived data.
+deliberately overrides the host. Local SQLite plus the loopback default is its
+privacy boundary. Both hosted and local `/api/health` return only `{ ok: true }`.
 
 ## Deterministic generation
 
-Generation is deterministic and local — the MVP has **no external LLM runtime path, no
+Generation is deterministic in both entrypoints — the MVP has **no external LLM runtime path, no
 API-key configuration and no provider fallback**. `provider/deterministic.ts` exposes one
 synchronous entry point, `generateDeterministic(text) → ProviderOutput`, which runs
-extraction → question generation → canonical validation in-process. The same input always
-produces the same output.
+extraction → question generation → canonical validation in-process (on the hosted Edge
+Function or local Next server). The same input always produces the same output.
+
+Text-based PDF extraction runs in the hosted browser with `unpdf`, then sends extracted
+text over HTTPS to the hosted API. The original PDF is not stored by ExamForge. This
+placement follows runtime probes: Cloudflare Workers Free's short CPU allowance did
+not fit representative deterministic generation, and a large PDF exhausted the
+Supabase Edge Function runtime. The hosted browser can report scanned/no-text PDFs
+honestly without sending full PDF bytes to the server.
 
 The `provider/` module boundary survives not as a provider framework (there is no
 interface, registry, mode selection or fallback) but because it keeps the two
@@ -191,10 +254,16 @@ no domain type or UI surface reads them.
   never touched. A separate production smoke suite
   (`playwright.prod-smoke.config.ts`, `npm run test:smoke:prod`) verifies the production
   build/start path with the same isolation rules.
+- **Hosted beta:** focused service tests, SQL migration/RLS/constraint probes with
+  disposable authenticated identities, and an anonymous browser journey on the deployed Cloudflare
+  URL. These verify the separate Auth, Postgres and Edge Function boundaries that local
+  SQLite tests cannot prove.
 
 ## UI structure
 
 Five course pages map to the stepper (`Material → Diagnostic → Practice → Mock Exam →
 Readiness`); a shared `SessionRunner` renders all three session kinds (immediate feedback
 for diagnostic/practice, deferred for mock). The dashboard always shows a computed
-"next study action" so the user always knows what to do next.
+"next study action" so the user always knows what to do next. Hosted Vite routing
+reuses the same page components and shared client API functions; local Next.js keeps
+its App Router and same-origin API handlers.
