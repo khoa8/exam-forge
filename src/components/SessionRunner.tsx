@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-client";
+
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { AnswerValue, ClientQuestion, GradeResult } from "@/lib/types";
@@ -86,7 +88,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${view.session.id}/answer`, {
+      const res = await apiFetch(`/api/sessions/${view.session.id}/answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ questionId: answeredQuestionId, answer: draft }),
@@ -97,7 +99,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
       }
       const data = (await res.json()) as { grade: GradeResult | null };
       if (data.grade) setFeedback({ questionId: answeredQuestionId, result: data.grade });
-      const refreshed = (await (await fetch(`/api/sessions/${view.session.id}`)).json()) as SessionView;
+      const refreshed = (await (await apiFetch(`/api/sessions/${view.session.id}`)).json()) as SessionView;
       // Hand focus on only when the saved question is still the one on screen. If the
       // learner navigated away, the control they activated is gone and focus already moved
       // to the new question card, so this response must not move it again.
@@ -127,7 +129,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${view.session.id}/finish`, { method: "POST" });
+      const res = await apiFetch(`/api/sessions/${view.session.id}/finish`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to finish session");

@@ -1,5 +1,8 @@
 "use client";
 
+import { apiFetch, isHosted } from "@/lib/api-client";
+import { ingestPdf } from "@/lib/ingest";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -24,9 +27,14 @@ export default function HomePage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadCourses = useCallback(async () => {
-    const res = await fetch("/api/courses");
-    const data = await res.json();
-    setCourses(data.courses);
+    try {
+      const res = await apiFetch("/api/courses");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not load courses.");
+      setCourses(data.courses);
+    } catch (err) {
+      setError((err as Error).message);
+    }
   }, []);
 
   useEffect(() => {
@@ -49,7 +57,7 @@ export default function HomePage() {
   }
 
   function loadSample() {
-    void createCourse(async () => fetch("/api/courses", {
+    void createCourse(async () => apiFetch("/api/courses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sample: true }),
@@ -61,7 +69,7 @@ export default function HomePage() {
       setError("Please paste at least 80 characters of study material.");
       return;
     }
-    void createCourse(async () => fetch("/api/courses", {
+    void createCourse(async () => apiFetch("/api/courses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: pasteText, title: pasteTitle || undefined }),
@@ -75,9 +83,26 @@ export default function HomePage() {
       return;
     }
     void createCourse(async () => {
+      if (file.size > 20 * 1024 * 1024) throw new Error("PDF is larger than 20 MB.");
+      if (isHosted()) {
+        const extracted = await ingestPdf(new Uint8Array(await file.arrayBuffer()));
+        if (extracted.text.trim().length < 80) {
+          throw new Error(extracted.warnings.join(" ") || "This PDF has too little extractable text. Paste text instead.");
+        }
+        return apiFetch("/api/courses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: extracted.text.slice(0, 200_000),
+            title: file.name.replace(/\.pdf$/i, ""),
+            sourceType: "pdf",
+            truncated: extracted.text.length > 200_000,
+          }),
+        });
+      }
       const form = new FormData();
       form.append("file", file);
-      return fetch("/api/courses", { method: "POST", body: form });
+      return apiFetch("/api/courses", { method: "POST", body: form });
     }, "pdf");
   }
 
@@ -85,7 +110,7 @@ export default function HomePage() {
     setBusy("delete-" + id);
     setError(null);
     try {
-      const res = await fetch(`/api/courses/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/courses/${id}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to delete the course. Please try again.");
@@ -123,7 +148,7 @@ export default function HomePage() {
             {busy === "sample" ? "Loading sample…" : "Load bundled demo material"}
           </h2>
           <p className="text-sm text-slate-600">
-            “Introduction to Human Memory” — a ready-made course that runs fully offline. Best first step.
+            “Introduction to Human Memory” — a ready-made course. Best first step.
           </p>
         </button>
 
@@ -185,14 +210,15 @@ export default function HomePage() {
       )}
 
       <p className="text-xs text-slate-500 max-w-3xl mx-auto text-center">
-        Privacy note: ExamForge runs entirely on your machine. Concepts, questions and feedback are generated
-        locally and deterministically — your material is never sent to an external service.
+        {isHosted() ?
+          "Privacy note: Your extracted material and progress are stored in the hosted ExamForge database. Questions and feedback are generated deterministically, without an external AI service. This anonymous browser identity has no backup or account recovery; clearing site data can make courses inaccessible. Deleting a course removes its material and progress." :
+          "Privacy note: ExamForge runs entirely on your machine. Concepts, questions and feedback are generated locally and deterministically — your material is never sent to an external service."}
       </p>
 
       <section className="space-y-3">
         <h2 className="font-semibold text-lg">Your courses</h2>
         {courses === null ? (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <p className="text-sm text-slate-500">{error ? "Courses could not be loaded." : "Loading…"}</p>
         ) : courses.length === 0 ? (
           <p className="text-sm text-slate-500 border rounded-xl bg-white px-4 py-6 text-center">
             No courses yet — load the bundled demo material above to try the full loop.

@@ -1,6 +1,6 @@
-import type { Concept, Evidence, ExtractionQuality } from "./types";
-import { contentWords, normText, randomId, wordSimilarity, stripArticle, capitalize } from "./util";
-import { looksLikeInstruction } from "./provider/sanitize";
+import type { Concept, Evidence, ExtractionQuality } from "./types.ts";
+import { contentWords, normText, randomId, wordSimilarity, stripArticle, capitalize } from "./util.ts";
+import { looksLikeInstruction } from "./provider/sanitize.ts";
 
 /**
  * Deterministic, key-free concept extraction from study text.

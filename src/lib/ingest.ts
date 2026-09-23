@@ -1,4 +1,4 @@
-import { isAlphaRatio } from "./util";
+import { isAlphaRatio } from "./util.ts";
 
 /**
  * Ingestion: pasted text/Markdown, text-based PDF, and the bundled sample.
@@ -24,7 +24,7 @@ export function ingestText(input: string): IngestResult {
   return { text, warnings };
 }
 
-export async function ingestPdf(buffer: Buffer): Promise<IngestResult> {
+export async function ingestPdf(buffer: Uint8Array): Promise<IngestResult> {
   const warnings: string[] = [];
   try {
     const { extractText, getDocumentProxy } = await import("unpdf");

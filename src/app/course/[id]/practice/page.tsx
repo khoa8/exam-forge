@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-client";
+
 import { Suspense, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -23,7 +25,7 @@ function PracticeInner() {
 
   useEffect(() => {
     if (sessionId) return;
-    fetch(`/api/courses/${id}`)
+    apiFetch(`/api/courses/${id}`)
       .then((r) => r.json())
       .then((d) => setOverview(d as CourseOverview))
       .catch(() => undefined);

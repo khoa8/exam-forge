@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-client";
+
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -14,7 +16,7 @@ export default function DiagnosticPage() {
 
   useEffect(() => {
     if (sessionId) return;
-    fetch(`/api/courses/${id}`)
+    apiFetch(`/api/courses/${id}`)
       .then((r) => r.json())
       .then((d) => setInfo({ title: d.course?.title ?? "", concepts: d.concepts?.length ?? 0 }))
       .catch(() => undefined);

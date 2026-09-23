@@ -2,6 +2,7 @@
 node_modules/
 .next/
 out/
+dist-hosted/
 
 # local data (user study material + progress — never commit)
 .data/

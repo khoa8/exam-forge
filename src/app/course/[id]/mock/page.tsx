@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-client";
+
 import { Suspense, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
@@ -22,7 +24,7 @@ function MockInner() {
 
   useEffect(() => {
     if (sessionId) return;
-    fetch(`/api/courses/${id}`)
+    apiFetch(`/api/courses/${id}`)
       .then((r) => r.json())
       .then((d) => {
         // Only one mock exam may be active per course (enforced server-side). It is reported

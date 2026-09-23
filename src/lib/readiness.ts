@@ -1,5 +1,5 @@
-import type { Concept, MasteryState, NextAction, ReadinessReport } from "./types";
-import { clamp01 } from "./util";
+import type { Concept, MasteryState, NextAction, ReadinessReport } from "./types.ts";
+import { clamp01 } from "./util.ts";
 
 /**
  * Readiness aggregation.

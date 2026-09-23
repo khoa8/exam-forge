@@ -13,7 +13,7 @@ async function request(path, key, { method = "GET", token, body, headers = {} } 
     method,
     headers: {
       apikey: key,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      Authorization: `Bearer ${token ?? key}`,
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       ...headers,
     },
@@ -23,16 +23,23 @@ async function request(path, key, { method = "GET", token, body, headers = {} } 
   return { status: response.status, data };
 }
 
-async function anonymousUser() {
+async function anonymousUser(name) {
+  const provided = process.env[`EXAMFORGE_TEST_JWT_${name}`];
+  if (provided) {
+    const result = await request("/auth/v1/user", publicKey, { token: provided });
+    assert.equal(result.status, 200, "supplied test JWT must be valid");
+    return { id: result.data.id, token: provided, createdForTest: false };
+  }
   const result = await request("/auth/v1/signup", publicKey, { method: "POST", body: {} });
-  assert.equal(result.status, 200, "anonymous sign-in must work in the isolated test project");
+  assert.equal(result.status, 200, "anonymous sign-in must work; with CAPTCHA enabled, provide two test JWTs");
   assert.ok(result.data?.access_token);
   assert.ok(result.data?.user?.id);
-  return { id: result.data.user.id, token: result.data.access_token };
+  return { id: result.data.user.id, token: result.data.access_token, createdForTest: true };
 }
 
-const a = await anonymousUser();
-const b = await anonymousUser();
+const a = await anonymousUser("A");
+const b = await anonymousUser("B");
+assert.notEqual(a.id, b.id, "test identities must differ");
 const id = randomUUID();
 const courseId = `crs_${id}`;
 const conceptId = `cpt_${id}`;
@@ -73,22 +80,25 @@ try {
   assert.ok(unauthorisedWrite.status >= 400, "direct learner writes are denied");
 
   const badCourse = { ...course, id: `bad_${id}` };
+  const badConcept = { ...concepts[0], id: `bad_concept_${id}` };
   const bad = await request("/rest/v1/rpc/ef_create_course", secretKey, {
     method: "POST",
-    body: { p_owner_id: a.id, p_course: badCourse, p_concepts: concepts,
-      p_questions: questions.map((q) => ({ ...q, concept_id: "missing" })) },
+    body: { p_owner_id: a.id, p_course: badCourse, p_concepts: [badConcept],
+      p_questions: questions.map((q, ord) => ({ ...q, id: `bad_q_${id}_${ord}`, concept_id: "missing" })) },
   });
   assert.ok(bad.status >= 400, "invalid child data rolls back the whole course");
   const rolledBack = await request(`/rest/v1/ef_courses?id=eq.${badCourse.id}&select=id`, secretKey);
   assert.deepEqual(rolledBack.data, [], "no half-written course remains");
 
-  const start = () => request("/rest/v1/ef_sessions", secretKey, {
-    method: "POST", headers: { Prefer: "return=representation" },
-    body: { id: `ses_${randomUUID()}`, course_id: courseId, kind: "mock", question_ids: questionIds },
+  const start = (sessionId) => request("/rest/v1/rpc/ef_start_session", secretKey, {
+    method: "POST",
+    body: { p_owner_id: a.id, p_id: sessionId, p_course_id: courseId, p_kind: "mock",
+      p_concept_id: null, p_question_ids: questionIds },
   });
-  const starts = await Promise.all([start(), start()]);
-  assert.deepEqual(starts.map((x) => x.status).sort(), [201, 409], "only one concurrent mock start succeeds");
-  const sessionId = starts.find((x) => x.status === 201).data[0].id;
+  const candidateIds = [`ses_${randomUUID()}`, `ses_${randomUUID()}`];
+  const starts = await Promise.all(candidateIds.map(start));
+  assert.deepEqual(starts.map((x) => x.status).sort(), [200, 409], "only one concurrent mock start succeeds");
+  const sessionId = candidateIds[starts.findIndex((x) => x.status === 200)];
 
   const answer = () => request("/rest/v1/rpc/ef_submit_attempt", secretKey, {
     method: "POST", body: { p_session_id: sessionId, p_question_id: questionIds[0],
@@ -105,10 +115,30 @@ try {
   });
   assert.equal(finished.data, true);
   assert.ok((await answer()).status >= 400, "completed sessions reject new answers");
+  const diagnosticId = `ses_${randomUUID()}`;
+  const diagnostic = await request("/rest/v1/rpc/ef_start_session", secretKey, {
+    method: "POST", body: { p_owner_id: a.id, p_id: diagnosticId, p_course_id: courseId,
+      p_kind: "diagnostic", p_concept_id: null, p_question_ids: questionIds },
+  });
+  assert.equal(diagnostic.status, 200);
+  const race = await Promise.all([
+    start(`ses_${randomUUID()}`),
+    request("/rest/v1/rpc/ef_submit_attempt", secretKey, {
+      method: "POST", body: { p_session_id: diagnosticId, p_question_id: questionIds[0],
+        p_answer_json: { type: "option", optionId: "a" }, p_score: 1, p_correct: true },
+    }),
+  ]);
+  assert.equal(race[0].status, 200, "mock start succeeds after first mock completes");
+  assert.ok([200, 400].includes(race[1].status), "answer either commits before mock start or is rejected");
+  const afterStart = await request("/rest/v1/rpc/ef_submit_attempt", secretKey, {
+    method: "POST", body: { p_session_id: diagnosticId, p_question_id: questionIds[1],
+      p_answer_json: { type: "option", optionId: "a" }, p_score: 1, p_correct: true },
+  });
+  assert.ok(afterStart.status >= 400, "active mock protects overlapping diagnostic questions");
   console.log("Hosted DB smoke passed: owner isolation, protected keys, atomicity, concurrency and lifecycle.");
 } finally {
   await request(`/rest/v1/ef_courses?id=eq.${courseId}`, secretKey, { method: "DELETE" });
   for (const user of [a, b]) {
-    await request(`/auth/v1/admin/users/${user.id}`, secretKey, { method: "DELETE" });
+    if (user.createdForTest) await request(`/auth/v1/admin/users/${user.id}`, secretKey, { method: "DELETE" });
   }
 }

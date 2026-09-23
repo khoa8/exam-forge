@@ -103,6 +103,7 @@ export const createCourseBodySchema = z.object({
   sample: z.boolean().optional(),
   text: z.string().optional(),
   title: z.string().optional(),
+  truncated: z.boolean().optional(),
 });
 
 export const startSessionBodySchema = z.object({

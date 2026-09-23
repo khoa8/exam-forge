@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import type { AttemptRecord } from "./mastery";
+import type { AttemptRecord } from "./mastery.ts";
 
 /**
  * Persistence layer — SQLite via node:sqlite (no native install required).
