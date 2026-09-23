@@ -15,6 +15,13 @@ export type SessionRow = {
   completedAt: string | null;
 };
 type AttemptRow = { questionId: string; conceptId: string; answerJson: string; score: number; correct: boolean; createdAt: string };
+export type CourseState = {
+  sessions: SessionRow[];
+  attempts: Array<{
+    id: number; sessionId: string; questionId: string; conceptId: string;
+    score: number; correct?: boolean; createdAt: string; answerJson?: string;
+  }>;
+};
 
 function required<T>(data: T | null, error: { message: string; code?: string } | null): T {
   if (error) throw new Error(`Hosted database operation failed (${error.code ?? "unknown"}): ${error.message}`);
@@ -153,6 +160,7 @@ export class HostedDb {
       p_question_ids: session.questionIds,
     });
     if (error?.code === "23505") throw new Error("ACTIVE_MOCK_CONFLICT");
+    if (error?.message.includes("SESSION_LIMIT_REACHED")) throw new Error("SESSION_LIMIT_REACHED");
     required(true, error);
   }
 
@@ -160,7 +168,6 @@ export class HostedDb {
     const { data, error } = await this.client.from("ef_sessions").select("*").eq("id", id).maybeSingle();
     required(true, error);
     if (!data || !(await this.ownsCourse(data.course_id))) return null;
-    if (error?.message.includes("SESSION_LIMIT_REACHED")) throw new Error("SESSION_LIMIT_REACHED");
     return mapSession(data as Record<string, unknown>);
   }
 
@@ -171,15 +178,23 @@ export class HostedDb {
       Number(b.created_seq) - Number(a.created_seq)).map(mapSession);
   }
 
-  async getSessionAttemptCounts(courseId: string): Promise<Map<string, number>> {
-    if (!(await this.ownsCourse(courseId))) return new Map();
-    const rows = await allRows(this.client, "ef_attempts", "course_id", courseId);
-    const counts = new Map<string, number>();
-    for (const row of rows) {
-      const sessionId = row.session_id as string;
-      counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1);
-    }
-    return counts;
+  /** Sessions, protection state and dependent attempts from one MVCC statement. */
+  async getCourseState(courseId: string, sessionId?: string): Promise<CourseState | null> {
+    const { data, error } = await this.client.rpc("ef_course_state", {
+      p_owner_id: this.ownerId, p_course_id: courseId, p_session_id: sessionId ?? null,
+    });
+    required(true, error);
+    if (!data) return null;
+    const state = data as { sessions: Record<string, unknown>[]; attempts: Record<string, unknown>[] };
+    return {
+      sessions: state.sessions.map(mapSession),
+      attempts: state.attempts.map((a) => ({
+        id: Number(a.id), sessionId: a.session_id as string, questionId: a.question_id as string,
+        conceptId: a.concept_id as string, score: a.score as number,
+        correct: a.correct as boolean | undefined, createdAt: a.created_at as string,
+        answerJson: a.answer_json === undefined ? undefined : JSON.stringify(a.answer_json),
+      })),
+    };
   }
 
   async completeSession(id: string): Promise<void> {
@@ -219,16 +234,13 @@ export class HostedDb {
     }));
   }
 
-  async getEligibleCourseAttempts(courseId: string, excludedQuestionIds: readonly string[] = []): Promise<AttemptRecord[]> {
-    if (!(await this.ownsCourse(courseId))) return [];
-    const [attempts, sessions] = await Promise.all([
-      allRows(this.client, "ef_attempts", "course_id", courseId), this.listSessions(courseId),
-    ]);
-    const activeMockSessions = new Set(sessions.filter((s) => s.kind === "mock" && s.status === "active").map((s) => s.id));
-    const excluded = new Set(excludedQuestionIds);
-    return attempts
-      .filter((a) => !activeMockSessions.has(a.session_id as string) && !excluded.has(a.question_id as string))
-      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || Number(a.id) - Number(b.id))
-      .map((a) => ({ conceptId: a.concept_id as string, score: a.score as number, createdAt: a.created_at as string }));
+  getEligibleCourseAttempts(state: CourseState): AttemptRecord[] {
+    const activeMockSessions = new Set(state.sessions.filter((s) => s.kind === "mock" && s.status === "active").map((s) => s.id));
+    const protectedIds = new Set(state.sessions.filter((s) => s.kind === "mock" && s.status === "active")
+      .flatMap((s) => s.questionIds));
+    return [...state.attempts]
+      .filter((a) => !activeMockSessions.has(a.sessionId) && !protectedIds.has(a.questionId))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id - b.id)
+      .map((a) => ({ conceptId: a.conceptId, score: a.score, createdAt: a.createdAt }));
   }
 }

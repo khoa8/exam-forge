@@ -1,6 +1,6 @@
 import type { AnswerValue, Concept, Course, GradeResult, MasteryState, Question, Session, SessionKind } from "./types.ts";
 import type { CreateCourseInput, CourseOverview, SessionListItem, SessionView } from "./service.ts";
-import { HostedDb, type SessionRow } from "./hosted-db.ts";
+import { HostedDb, type CourseState, type SessionRow } from "./hosted-db.ts";
 import { generateDeterministic, NoConceptsError } from "./provider/deterministic.ts";
 import { computeMastery } from "./mastery.ts";
 import { computeReadiness } from "./readiness.ts";
@@ -90,9 +90,9 @@ export class HostedService {
     return (await this.db.getQuestions(courseId)).map((q) => JSON.parse(q.payloadJson) as Question);
   }
 
-  private async activeMockQuestionIds(courseId: string): Promise<Set<string>> {
+  private activeMockQuestionIds(state: CourseState): Set<string> {
     const ids = new Set<string>();
-    for (const session of await this.db.listSessions(courseId)) {
+    for (const session of state.sessions) {
       if (session.kind === "mock" && session.status === "active") {
         for (const id of session.questionIds) ids.add(id);
       }
@@ -100,13 +100,15 @@ export class HostedService {
     return ids;
   }
 
-  private async protectedQuestionIds(session: SessionRow): Promise<Set<string>> {
+  private protectedQuestionIds(session: SessionRow, state: CourseState): Set<string> {
     if (session.kind === "mock" && session.status === "active") return new Set();
-    return this.activeMockQuestionIds(session.courseId);
+    return this.activeMockQuestionIds(state);
   }
 
   private async weakestConceptId(courseId: string, concepts: Concept[]): Promise<string> {
-    const attempts = await this.db.getEligibleCourseAttempts(courseId, [...await this.activeMockQuestionIds(courseId)]);
+    const state = await this.db.getCourseState(courseId);
+    if (!state) throw new HostedNotFoundError("Course");
+    const attempts = this.db.getEligibleCourseAttempts(state);
     const now = new Date().toISOString();
     let worst = concepts[0];
     let worstMastery = 2;
@@ -126,16 +128,20 @@ export class HostedService {
       createdAt: row.createdAt, textLength: row.materialText.length, quality: JSON.parse(row.qualityJson),
     };
     const concepts = await this.concepts(courseId);
-    const attempts = await this.db.getEligibleCourseAttempts(courseId, [...await this.activeMockQuestionIds(courseId)]);
+    const state = await this.db.getCourseState(courseId);
+    if (!state) throw new HostedNotFoundError("Course");
+    const attempts = this.db.getEligibleCourseAttempts(state);
     const now = new Date().toISOString();
     const masteryByConcept = new Map<string, MasteryState>();
     for (const concept of concepts) {
       masteryByConcept.set(concept.id, computeMastery(concept.id,
         attempts.filter((a) => a.conceptId === concept.id), concept.importance, now));
     }
-    const [sessions, attemptCounts] = await Promise.all([
-      this.db.listSessions(courseId), this.db.getSessionAttemptCounts(courseId),
-    ]);
+    const sessions = state.sessions;
+    const attemptCounts = new Map<string, number>();
+    for (const attempt of state.attempts) {
+      attemptCounts.set(attempt.sessionId, (attemptCounts.get(attempt.sessionId) ?? 0) + 1);
+    }
     const sessionItems: SessionListItem[] = sessions.map((session) => ({
       id: session.id, kind: session.kind as SessionKind, conceptId: session.conceptId,
       status: session.status as "active" | "completed", createdAt: session.createdAt,
@@ -198,22 +204,28 @@ export class HostedService {
     } catch (error) {
       if ((error as Error).message === "ACTIVE_MOCK_CONFLICT") throw new HostedConflictError(
         "A mock exam is already in progress for this course. Submit it before starting a new one.");
+      if ((error as Error).message === "SESSION_LIMIT_REACHED") throw new HostedConflictError(
+        "This beta allows 100 study sessions per course. Delete this course to make room for a new study cycle.");
       throw error;
     }
     return session;
   }
 
   async getSessionView(sessionId: string): Promise<SessionView> {
-      if ((error as Error).message === "SESSION_LIMIT_REACHED") throw new HostedConflictError(
-        "This beta allows 100 study sessions per course. Delete this course to make room for a new study cycle.");
-    const session = await this.db.getSession(sessionId);
-    if (!session) throw new HostedNotFoundError("Session");
+    const initial = await this.db.getSession(sessionId);
+    if (!initial) throw new HostedNotFoundError("Session");
+    const state = await this.db.getCourseState(initial.courseId, sessionId);
+    const session = state?.sessions.find((s) => s.id === sessionId);
+    if (!session || !state) throw new HostedNotFoundError("Session");
     const allQuestions = await this.questions(session.courseId);
     const byId = new Map(allQuestions.map((q) => [q.id, q]));
     const sessionQuestions = session.questionIds.map((id) => byId.get(id)).filter((q): q is Question => Boolean(q));
-    const protectedIds = await this.protectedQuestionIds(session);
+    const protectedIds = this.protectedQuestionIds(session, state);
     const withheldQuestionIds = sessionQuestions.filter((q) => protectedIds.has(q.id)).map((q) => q.id);
-    const attempts = await this.db.getSessionAttempts(sessionId);
+    const attempts = state.attempts.map((a) => ({
+      questionId: a.questionId, conceptId: a.conceptId, answerJson: a.answerJson ?? "",
+      score: a.score, correct: a.correct ?? false, createdAt: a.createdAt,
+    }));
     const revealed: Record<string, GradeResult> = {};
     const givenAnswers: Record<string, AnswerValue> = {};
     const review: NonNullable<SessionView["review"]> = [];
@@ -251,14 +263,23 @@ export class HostedService {
   }
 
   async answerQuestion(sessionId: string, questionId: string, answer: AnswerValue): Promise<{ grade: GradeResult | null; answeredCount: number; total: number }> {
-    const session = await this.db.getSession(sessionId);
-    if (!session) throw new HostedNotFoundError("Session");
+    const initial = await this.db.getSession(sessionId);
+    if (!initial) throw new HostedNotFoundError("Session");
+    const state = await this.db.getCourseState(initial.courseId);
+    const session = state?.sessions.find((s) => s.id === sessionId);
+    if (!session || !state) throw new HostedNotFoundError("Session");
     if (session.status === "completed") throw new HostedConflictError("This session is already completed.");
     if (!session.questionIds.includes(questionId)) throw new HostedNotFoundError("Question in this session");
-    if ((await this.protectedQuestionIds(session)).has(questionId)) throw new HostedConflictError(
+    if (this.protectedQuestionIds(session, state).has(questionId)) throw new HostedConflictError(
       "This question is part of an active mock exam. Submit the mock exam before answering it in another session.");
     const question = (await this.questions(session.courseId)).find((q) => q.id === questionId);
     if (!question) throw new HostedNotFoundError("Question");
+    if (!hostedAnswerValueSchema.safeParse(answer).success ||
+      (question.type === "mcq" && (answer.type !== "option" || !question.options.some((o) => o.id === answer.optionId))) ||
+      (question.type === "truefalse" && answer.type !== "boolean") ||
+      ((question.type === "short" || question.type === "explanation") && answer.type !== "text")) {
+      throw new HostedInvalidAnswerError();
+    }
     const existing = await this.db.getAttempt(sessionId, questionId);
     if (existing) {
       return {
@@ -274,12 +295,6 @@ export class HostedService {
         createdAt: new Date().toISOString(),
       });
       if (!inserted) {
-    if (!hostedAnswerValueSchema.safeParse(answer).success ||
-      (question.type === "mcq" && (answer.type !== "option" || !question.options.some((o) => o.id === answer.optionId))) ||
-      (question.type === "truefalse" && answer.type !== "boolean") ||
-      ((question.type === "short" || question.type === "explanation") && answer.type !== "text")) {
-      throw new HostedInvalidAnswerError();
-    }
         const first = await this.db.getAttempt(sessionId, questionId);
         if (!first) throw new Error("First attempt was not found after a duplicate answer.");
         return {
