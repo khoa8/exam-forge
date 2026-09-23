@@ -42,7 +42,7 @@ function fakeDb(state: CourseState) {
     getEligibleCourseAttempts: HostedDb.prototype.getEligibleCourseAttempts,
     listSessions: vi.fn(() => { throw new Error("independent session read would mix snapshots"); }),
     getSessionAttempts: vi.fn(() => { throw new Error("independent attempt read would mix snapshots"); }),
-    insertSession: vi.fn(async () => {}),
+    insertSession: vi.fn(async (_session: { conceptId: string | null }, _expectedMock?: string | null) => {}),
     getAttempt: vi.fn(async () => null),
     insertAttempt: vi.fn(async () => true),
   };
@@ -74,5 +74,18 @@ describe("hosted active mock snapshot", () => {
     expect(restored.withheldQuestionIds).toEqual([]);
     expect(restored.revealed.q1.correct).toBe(true);
     expect(restored.summary?.correct).toBe(1);
+  });
+
+  it("reselects automatic practice targets when mock protection changes before insertion", async () => {
+    const { db, service } = fakeDb(releasedState);
+    db.getCourseState.mockResolvedValueOnce(releasedState).mockResolvedValueOnce(protectedState);
+    db.insertSession.mockRejectedValueOnce(new Error("COURSE_STATE_CHANGED"));
+    const practice = await service.startSession("course", "practice");
+    expect(practice.conceptId).toBe("c1");
+    expect(db.insertSession).toHaveBeenCalledTimes(2);
+    expect(db.insertSession.mock.calls[0][0].conceptId).toBe("c2");
+    expect(db.insertSession.mock.calls[0][1]).toBeNull();
+    expect(db.insertSession.mock.calls[1][0].conceptId).toBe("c1");
+    expect(db.insertSession.mock.calls[1][1]).toBe("mock");
   });
 });

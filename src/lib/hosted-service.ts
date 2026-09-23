@@ -105,7 +105,7 @@ export class HostedService {
     return this.activeMockQuestionIds(state);
   }
 
-  private async weakestConceptId(courseId: string, concepts: Concept[]): Promise<string> {
+  private async weakestConceptId(courseId: string, concepts: Concept[]): Promise<{ conceptId: string; activeMockId: string | null }> {
     const state = await this.db.getCourseState(courseId);
     if (!state) throw new HostedNotFoundError("Course");
     const attempts = this.db.getEligibleCourseAttempts(state);
@@ -117,7 +117,10 @@ export class HostedService {
       const score = mastery.status === "untested" ? 0.35 : mastery.mastery;
       if (score < worstMastery) { worstMastery = score; worst = concept; }
     }
-    return worst.id;
+    return {
+      conceptId: worst.id,
+      activeMockId: state.sessions.find((s) => s.kind === "mock" && s.status === "active")?.id ?? null,
+    };
   }
 
   async getCourseOverview(courseId: string): Promise<CourseOverview> {
@@ -172,7 +175,7 @@ export class HostedService {
     };
   }
 
-  async startSession(courseId: string, kind: SessionKind, conceptId?: string): Promise<Session> {
+  async startSession(courseId: string, kind: SessionKind, conceptId?: string, retry = 0): Promise<Session> {
     if (!(await this.db.getCourse(courseId))) throw new HostedNotFoundError("Course");
     const concepts = await this.concepts(courseId);
     if (concepts.length === 0) throw new HostedConflictError("This course has no concepts to study.");
@@ -182,8 +185,14 @@ export class HostedService {
     const questions = await this.questions(courseId);
     let picked: Question[];
     let target: string | null = null;
+    let expectedActiveMockId: string | null | undefined;
     if (kind === "practice") {
-      target = conceptId ?? await this.weakestConceptId(courseId, concepts);
+      if (conceptId !== undefined) target = conceptId;
+      else {
+        const selection = await this.weakestConceptId(courseId, concepts);
+        target = selection.conceptId;
+        expectedActiveMockId = selection.activeMockId;
+      }
       if (!concepts.some((c) => c.id === target)) throw new HostedNotFoundError("Concept");
       picked = samplePractice(questions, target, courseId);
       if (picked.length === 0) throw new HostedConflictError(
@@ -200,12 +209,16 @@ export class HostedService {
       questionIds: picked.map((q) => q.id), status: "active", createdAt: new Date().toISOString(), completedAt: null,
     };
     try {
-      await this.db.insertSession(session);
+      await this.db.insertSession(session, expectedActiveMockId);
     } catch (error) {
       if ((error as Error).message === "ACTIVE_MOCK_CONFLICT") throw new HostedConflictError(
         "A mock exam is already in progress for this course. Submit it before starting a new one.");
       if ((error as Error).message === "SESSION_LIMIT_REACHED") throw new HostedConflictError(
         "This beta allows 100 study sessions per course. Delete this course to make room for a new study cycle.");
+      if ((error as Error).message === "COURSE_STATE_CHANGED") {
+        if (retry < 2) return this.startSession(courseId, kind, conceptId, retry + 1);
+        throw new HostedConflictError("Course activity changed while starting practice. Please try again.");
+      }
       throw error;
     }
     return session;

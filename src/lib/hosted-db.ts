@@ -152,15 +152,22 @@ export class HostedDb {
   async insertSession(session: {
     id: string; courseId: string; kind: string; conceptId: string | null;
     questionIds: string[]; createdAt: string;
-  }): Promise<void> {
+  }, expectedActiveMockId?: string | null): Promise<void> {
     if (!(await this.ownsCourse(session.courseId))) throw new Error("Course not found");
-    const { error } = await this.client.rpc("ef_start_session", {
-      p_owner_id: this.ownerId, p_id: session.id, p_course_id: session.courseId,
-      p_kind: session.kind, p_concept_id: session.conceptId,
-      p_question_ids: session.questionIds,
-    });
+    const { error } = expectedActiveMockId === undefined
+      ? await this.client.rpc("ef_start_session", {
+        p_owner_id: this.ownerId, p_id: session.id, p_course_id: session.courseId,
+        p_kind: session.kind, p_concept_id: session.conceptId,
+        p_question_ids: session.questionIds,
+      })
+      : await this.client.rpc("ef_start_practice_session", {
+        p_owner_id: this.ownerId, p_id: session.id, p_course_id: session.courseId,
+        p_concept_id: session.conceptId, p_question_ids: session.questionIds,
+        p_expected_active_mock_id: expectedActiveMockId,
+      });
     if (error?.code === "23505") throw new Error("ACTIVE_MOCK_CONFLICT");
     if (error?.message.includes("SESSION_LIMIT_REACHED")) throw new Error("SESSION_LIMIT_REACHED");
+    if (error?.message.includes("COURSE_STATE_CHANGED")) throw new Error("COURSE_STATE_CHANGED");
     required(true, error);
   }
 

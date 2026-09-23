@@ -152,8 +152,9 @@ try {
     } });
     assert.equal(written.status, 200, "legitimate short and explanation answers persist");
   }
+  const secondMockId = `ses_${randomUUID()}`;
   const race = await Promise.all([
-    start(`ses_${randomUUID()}`),
+    start(secondMockId),
     request("/rest/v1/rpc/ef_submit_attempt", secretKey, {
       method: "POST", body: { p_session_id: diagnosticId, p_question_id: questionIds[0],
         p_answer_json: { type: "option", optionId: "a" }, p_score: 1, p_correct: true },
@@ -166,7 +167,18 @@ try {
       p_answer_json: { type: "option", optionId: "a" }, p_score: 1, p_correct: true },
   });
   assert.ok(afterStart.status >= 400, "active mock protects overlapping diagnostic questions");
-  const filler = Array.from({ length: 97 }, () => ({
+  const guarded = (practiceId, expectedMockId) => request("/rest/v1/rpc/ef_start_practice_session", secretKey, {
+    method: "POST", body: { p_owner_id: a.id, p_id: practiceId, p_course_id: courseId,
+      p_concept_id: conceptId, p_question_ids: questionIds, p_expected_active_mock_id: expectedMockId },
+  });
+  const stalePracticeId = `ses_${randomUUID()}`;
+  assert.ok((await guarded(stalePracticeId, null)).status >= 400,
+    "practice start rejects a stale no-mock target snapshot");
+  assert.deepEqual((await request(`/rest/v1/ef_sessions?id=eq.${stalePracticeId}&select=id`, secretKey)).data, [],
+    "stale target creates no partial session");
+  assert.equal((await guarded(`ses_${randomUUID()}`, secondMockId)).status, 200,
+    "practice start accepts the matching mock-protection snapshot");
+  const filler = Array.from({ length: 96 }, () => ({
     id: `ses_${randomUUID()}`, course_id: courseId, kind: "practice", concept_id: conceptId,
     question_ids: questionIds,
   }));

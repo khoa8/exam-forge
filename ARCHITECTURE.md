@@ -110,7 +110,12 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    snapshot; a response can linearize before or after a concurrent mock
    transition, but cannot mix its protection and attempt states. Course
    concepts and questions are immutable after creation, so they can be read
-   separately. Grading and readiness remain in TypeScript.
+   separately. Automatic practice targeting sends the snapshot's active-mock
+   ID to `ef_start_practice_session`; under the course advisory lock it checks
+   that identity again before inserting. If a mock started or changed between
+   target selection and insertion, the server reselects from a fresh snapshot
+   or returns a conflict without creating a session. Grading and readiness
+   remain in TypeScript.
 4. **Generated content crosses one shared trust boundary** — every candidate goes
    through `validateQuestionSet`, which first parses it against the canonical zod
    schemas (runtime validation, not TypeScript casts) and then applies the semantic
