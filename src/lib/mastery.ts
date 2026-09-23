@@ -1,5 +1,5 @@
-import type { MasteryState } from "./types";
-import { clamp01 } from "./util";
+import type { MasteryState } from "./types.ts";
+import { clamp01 } from "./util.ts";
 
 /**
  * Simple, understandable adaptive model.

@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-client";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -17,7 +19,7 @@ export default function CourseDashboardPage() {
   const [starting, setStarting] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/courses/${id}`)
+    apiFetch(`/api/courses/${id}`)
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to load course");
@@ -30,7 +32,7 @@ export default function CourseDashboardPage() {
     setStarting(kind + (conceptId ?? ""));
     setError(null);
     try {
-      const res = await fetch(`/api/courses/${id}/sessions`, {
+      const res = await apiFetch(`/api/courses/${id}/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind, conceptId }),

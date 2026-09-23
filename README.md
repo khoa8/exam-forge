@@ -2,101 +2,115 @@
 
 **Turn study material into an adaptive exam coach.**
 
-ExamForge takes study material (Markdown, pasted text, or a text-based PDF), extracts the
-key concepts, diagnoses what you actually know with a short diagnostic quiz, gives grounded
-feedback on every answer, trains your weak topics, runs a mock exam, and tells you what to
-study next.
-
-It is deliberately **not** a "chat with your PDF" app. The core loop is active recall:
+Load the bundled sample, paste notes, or upload a text-based PDF. ExamForge extracts
+grounded concepts and leads you through the learning loop:
 
 > Material → Diagnostic → Practice → Mock Exam → Readiness
 
 ![Course dashboard](docs/screenshots/02-course-dashboard.png)
 
-## Quick start
+Questions, grading, and study signals are deterministic. No material goes to an
+external AI service and no model API key is needed. Readiness is an internal study
+heuristic, not a prediction of a real exam score.
 
-Requires Node.js **22.13+** (local persistence uses the built-in `node:sqlite` module,
-enabled without flags from Node 22.13; the repo pins this via `engines` and `.nvmrc`).
+## Hosted beta
+
+Try the [ExamForge beta](https://examforge-beta.kay8nand.workers.dev). First use
+creates an anonymous identity for that browser after a verification check. Study
+material and progress are stored in the hosted ExamForge database. The identity has
+no email, password, backup, or account recovery. Clearing site data or using a
+different browser/device can make old courses inaccessible. Deleting a course removes
+its material and derived progress.
+
+The beta allows 10 courses per browser identity, five generation attempts per
+hour, and 100 study sessions per course. At the session limit, existing progress
+remains available; delete a course to start a new study cycle. Written answers
+are limited to 2,000 characters. Material is capped at 200,000 characters;
+text-based PDFs are capped at 20 MB.
+Scanned PDFs need OCR and are not supported. PDF text extraction happens in your
+browser; the original PDF is not stored by ExamForge. Extraction from complex layouts
+can be incomplete, and insufficient material fails without invented questions.
+Free-tier infrastructure has no paid availability guarantee.
+
+## Local development
+
+Requires Node.js **22.13+**. The local Next.js mode uses SQLite and binds to
+`127.0.0.1`; its data stays on this machine. The hosted beta has a separate
+Supabase database and does not use local SQLite.
 
 ```bash
 npm install
-npm run dev            # http://127.0.0.1:3000 (loopback only)
+npm run dev            # http://127.0.0.1:3000
 ```
 
-The dev and production servers bind to `127.0.0.1` by default, so your study material and
-progress stay on your machine and the app is not reachable from other devices on your
-network. To expose it deliberately (not recommended for private material), override the
-host in the underlying command.
+Click **Load bundled demo material** to try the full loop. Local progress is stored
+in `.data/examforge.sqlite`. No credentials are required for local mode.
 
-No API key needed. Click **“Load bundled demo material”** on the home page and you get a
-full course ("Introduction to Human Memory", 10 concepts, ~40 questions) generated
-deterministically on your machine.
+## Hosted deployment
 
-Try it end-to-end: take the diagnostic → see weak topics → practice one → take the mock
-exam → check the readiness dashboard. Your progress persists locally in SQLite
-(`.data/examforge.sqlite`).
+The hosted browser app is static assets on Cloudflare Workers. One Supabase Edge
+Function handles authenticated course and assessment APIs; Supabase Auth and Postgres
+hold anonymous identities and learner data. Use a dedicated Supabase project and
+Cloudflare Worker. The SQL migrations in `supabase/migrations/` must be applied in
+order to a clean project. See [ARCHITECTURE.md](ARCHITECTURE.md) for the ownership,
+answer-key, and transaction boundaries.
 
-## What you get (no setup, no network)
+Configuration names (supply your own values, never commit them):
 
-| Step | What happens |
-| --- | --- |
-| **Material** | Load the bundled sample, paste text/Markdown, or upload a text-based PDF. |
-| **Concepts** | Deterministic extraction finds the key topics with quotes from your material as evidence. |
-| **Diagnostic** | Up to 8 questions, one per major concept, mixed types (MCQ, true/false, short answer). |
-| **Feedback** | Every answer gets consistent grading plus an explanation grounded in the source, with the quote. |
-| **Weak topics** | A simple, explainable mastery model (recency-weighted) sorts concepts into weak / developing / strong. |
-| **Practice** | Targeted sets for one topic — including open explanation questions graded by key-idea coverage. |
-| **Mock exam** | Balanced across concepts, feedback withheld until you submit, full review afterward. |
-| **Readiness** | An internal heuristic estimate (clearly labeled — not an exam-score prediction) and an ordered study plan. |
+| Location | Name | Purpose |
+| --- | --- | --- |
+| Hosted Vite build | `VITE_SUPABASE_URL` | Supabase project URL |
+| Hosted Vite build | `VITE_SUPABASE_PUBLISHABLE_KEY` | Public Supabase key |
+| Hosted Vite build | `VITE_TURNSTILE_SITE_KEY` | Public Cloudflare Turnstile site key |
+| Edge Function secret | `EXAMFORGE_PUBLISHABLE_KEY` | Supabase public key for JWT verification |
+| Edge Function secret | `EXAMFORGE_SECRET_KEY` | Privileged server-only Supabase secret key |
+| Edge Function secret | `EXAMFORGE_ALLOWED_ORIGINS` | Comma-separated exact hosted origins |
+| Supabase Auth config environment | `EXAMFORGE_TURNSTILE_SECRET` | Private Turnstile verification secret |
 
-![Diagnostic feedback with source evidence](docs/screenshots/03-diagnostic-feedback.png)
+Supabase supplies `SUPABASE_URL` to the Edge Function. Enable anonymous Auth with
+Turnstile CAPTCHA and an appropriate signup rate limit; configure the Turnstile
+secret in Supabase Auth, and allow the dedicated Worker domain in the widget. For
+local hosted-app development, allow `localhost`/`127.0.0.1` as needed. Keep the
+privileged key and Turnstile secret in provider secret stores only.
 
-## Supported material
+```bash
+npx supabase login
+npx supabase link --project-ref <dedicated-project-ref>
+npx supabase config diff
+npx supabase config push --project-ref <dedicated-project-ref>
+npx supabase db push --linked
+npx supabase functions deploy examforge --project-ref <dedicated-project-ref>
+npm run build:hosted
+npx wrangler deploy
+```
 
-- ✅ Bundled sample (one click)
-- ✅ Pasted text / Markdown (headings + "X is …" definitions work best)
-- ✅ Text-based PDFs
-- ⚠️ Scanned PDFs need OCR — not supported; ExamForge tells you honestly when extraction
-  comes up empty
-- ❌ Slides with heavy layouts may extract poorly (quality notes appear when they do)
+Review `config diff` before pushing so a generated default does not overwrite an
+intentional setting. Set the Edge Function secrets in Supabase's secret store before
+deploying the function; provide the Turnstile secret as an environment variable when
+pushing Auth configuration. The function's JWT is checked inside the handler. Its CORS allowlist and
+`private, no-store` response headers must match the deployed Worker URL. Update
+`wrangler.jsonc`'s dedicated Worker name for a new environment. Deployment does not
+create a custom domain or paid service.
 
 ## Scripts
 
 ```bash
-npm run dev              # dev server on 127.0.0.1:3000
-npm run build            # production build
-npm start                # run the production build
-npm test                 # unit + integration tests (vitest)
-npm run test:e2e         # Playwright journey test (own loopback server, disposable DB)
-npm run test:smoke:prod  # production build + smoke test on an isolated server
-npm run typecheck        # tsc --noEmit
-npm run lint             # eslint
-npm run db:reset         # delete local progress data
-npm run screenshots      # regenerate the README screenshots (run `npm run build` first)
+npm run dev              # local Next.js server
+npm run build            # local production build
+npm start                # local production server
+npm run build:hosted     # hosted static assets
+npm run deploy:hosted    # hosted build and Cloudflare deployment
+npm test                 # unit and integration tests
+npm run test:e2e         # local Playwright journey, disposable SQLite DB
+npm run test:smoke:prod  # local production build and smoke test
+npm run typecheck
+npm run lint
+npm run db:reset         # delete local progress
 ```
 
-Browser tests never touch your local course data: `test:e2e` and `test:smoke:prod` start
-their own server on a dedicated port with a disposable SQLite database in a temp
-directory. `npm run screenshots` is isolated the same way — it captures from its own
-loopback server with a fresh temporary database, so published screenshots can only ever
-show the bundled demo material and never your own courses.
+Local browser tests and screenshots use disposable SQLite databases; they never use
+hosted learner data. The hosted DB and API smoke scripts require a dedicated test
+project and two disposable authenticated JWTs when CAPTCHA is enabled.
 
-## Privacy
-
-- Generation is local and deterministic: your material is never sent to an external AI
-  service, and no API key or external generation service exists in the current app.
-- Servers bind to loopback (`127.0.0.1`) by default in both `npm run dev` and `npm start`,
-  so material and progress remain local to ExamForge's process/storage during normal use.
-- Deleting a course removes its material, concepts, questions, and progress.
-- Readiness/mastery numbers are internal study heuristics, not predictions.
-
-## Limitations
-
-- Generation is pattern-based: material without clear definition sentences yields fewer
-  questions (it will not invent filler).
-- Readiness is a heuristic over this app's answers only — it is not a real exam prediction.
-- No OCR, no multi-user accounts (single local learner), no scheduling beyond simple
-  review hints.
-
-See [PRODUCT.md](PRODUCT.md) for the product contract and [ARCHITECTURE.md](ARCHITECTURE.md)
-for the technical design and system invariants.
+See [PRODUCT.md](PRODUCT.md) for product behavior, [ARCHITECTURE.md](ARCHITECTURE.md)
+for implementation invariants, and [SECURITY.md](SECURITY.md) for private reporting.

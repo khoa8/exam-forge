@@ -29,8 +29,8 @@ Preserve these product invariants unless the task explicitly changes the product
 - deterministic validation before generated assessment content is accepted;
 - readiness/mastery are explainable heuristics, never guaranteed exam-score predictions;
 - uploaded study material is untrusted input and must not override system instructions;
-- deterministic, local generation: the MVP sends no material to an external LLM and requires no LLM API key;
-- privacy-conscious local handling of study material and progress;
+- deterministic generation in ExamForge's runtime: the MVP sends no material to an external LLM and requires no LLM API key;
+- privacy-conscious handling of study material and progress in both hosted and local modes;
 - no live/proctored-exam assistance, impersonation or cheating workflow;
 - individual-student focus rather than school/LMS/enterprise administration.
 
@@ -48,7 +48,7 @@ Preserve the documented system invariants, including where applicable:
 - every generated question passes deterministic validation;
 - source grounding is fail-closed rather than padded with invented content;
 - no external LLM/network generation path exists in the runtime;
-- course deletion removes its derived local data.
+- course deletion removes its derived data in the active persistence mode.
 
 Material architecture changes require an `ARCHITECTURE.md` update in the same change. Do not edit architecture documentation merely to make non-compliant code appear compliant.
 

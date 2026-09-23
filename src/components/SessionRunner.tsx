@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch, isHosted } from "@/lib/api-client";
+
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { AnswerValue, ClientQuestion, GradeResult } from "@/lib/types";
@@ -86,7 +88,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${view.session.id}/answer`, {
+      const res = await apiFetch(`/api/sessions/${view.session.id}/answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ questionId: answeredQuestionId, answer: draft }),
@@ -97,7 +99,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
       }
       const data = (await res.json()) as { grade: GradeResult | null };
       if (data.grade) setFeedback({ questionId: answeredQuestionId, result: data.grade });
-      const refreshed = (await (await fetch(`/api/sessions/${view.session.id}`)).json()) as SessionView;
+      const refreshed = (await (await apiFetch(`/api/sessions/${view.session.id}`)).json()) as SessionView;
       // Hand focus on only when the saved question is still the one on screen. If the
       // learner navigated away, the control they activated is gone and focus already moved
       // to the new question card, so this response must not move it again.
@@ -127,7 +129,7 @@ export function SessionRunner({ initialView, courseId }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/sessions/${view.session.id}/finish`, { method: "POST" });
+      const res = await apiFetch(`/api/sessions/${view.session.id}/finish`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to finish session");
@@ -401,6 +403,8 @@ function AnswerInput({
 }) {
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const truthRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const hostedTextLimit = isHosted() ? 2000 : undefined;
+  const answerLength = value?.type === "text" ? value.text.length : 0;
 
   if (question.type === "mcq" && question.options) {
     const options = question.options;
@@ -478,27 +482,37 @@ function AnswerInput({
   }
   if (question.type === "short") {
     return (
-      <input
-        type="text"
-        disabled={disabled}
-        value={value?.type === "text" ? value.text : ""}
-        onChange={(e) => onChange({ type: "text", text: e.target.value })}
-        placeholder="Type the term…"
-        aria-label="Your answer"
-        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
-      />
+      <div>
+        <input
+          type="text"
+          disabled={disabled}
+          maxLength={hostedTextLimit}
+          value={value?.type === "text" ? value.text : ""}
+          onChange={(e) => onChange({ type: "text", text: e.target.value })}
+          placeholder="Type the term…"
+          aria-label="Your answer"
+          aria-describedby={hostedTextLimit ? "hosted-answer-limit" : undefined}
+          className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
+        />
+        {hostedTextLimit && <p id="hosted-answer-limit" className="mt-1 text-xs text-slate-500">{answerLength} / 2,000 characters</p>}
+      </div>
     );
   }
   return (
-    <textarea
-      disabled={disabled}
-      rows={5}
-      value={value?.type === "text" ? value.text : ""}
-      onChange={(e) => onChange({ type: "text", text: e.target.value })}
-      placeholder="Write your explanation in your own words…"
-      aria-label="Your explanation"
-      className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
-    />
+    <div>
+      <textarea
+        disabled={disabled}
+        maxLength={hostedTextLimit}
+        rows={5}
+        value={value?.type === "text" ? value.text : ""}
+        onChange={(e) => onChange({ type: "text", text: e.target.value })}
+        placeholder="Write your explanation in your own words…"
+        aria-label="Your explanation"
+        aria-describedby={hostedTextLimit ? "hosted-answer-limit" : undefined}
+        className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:border-indigo-500"
+      />
+      {hostedTextLimit && <p id="hosted-answer-limit" className="mt-1 text-xs text-slate-500">{answerLength} / 2,000 characters</p>}
+    </div>
   );
 }
 

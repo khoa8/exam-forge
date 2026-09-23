@@ -4,7 +4,7 @@
 
 ExamForge is currently under active development and has not yet established multiple supported release lines.
 
-Security fixes are applied to the current version on the `main` branch. Older commits, branches, forks, and unofficial distributions are not separately supported.
+Security fixes are applied to the current version on the `main` branch and the active hosted beta. Older commits, branches, forks, and unofficial distributions are not separately supported.
 
 ## Reporting a Vulnerability
 
@@ -27,12 +27,13 @@ Do not include real study material, learner data, credentials, API keys, tokens,
 
 ## Security Scope
 
-ExamForge is a local-first, single-user application. Its normal development and production entrypoints bind to the loopback interface (`127.0.0.1`) by default, and course data and progress are stored locally in SQLite.
+The public beta serves static assets on Cloudflare and uses Supabase anonymous Auth, an Edge Function, and learner-owned Postgres data. The Edge Function verifies each learner JWT, checks ownership for every course/session ID, and keeps privileged database credentials and answer-bearing question rows server-side. Learner JWTs have no direct ExamForge table or RPC grants; course material and progress are available only through the owner-scoped Edge Function. Its responses are non-cacheable. Turnstile protects anonymous signup. A separate optional local mode binds to `127.0.0.1` and stores data in SQLite.
 
 Security reports are especially relevant when they involve areas such as:
 
-* unintended exposure of local study material or learner progress;
-* bypass of the documented loopback/local-data boundary;
+* one learner accessing another learner's material, answers, progress or sessions;
+* answer-key or privileged-key exposure through the Data API, Edge Function, browser bundle, or caches;
+* bypass of the hosted Auth/RLS/ownership boundary or the local loopback boundary;
 * unsafe handling of uploaded or pasted study material;
 * arbitrary code execution or unsafe file processing;
 * path traversal or unintended filesystem access;
@@ -42,6 +43,8 @@ Security reports are especially relevant when they involve areas such as:
 * dependency vulnerabilities with a reachable impact on ExamForge.
 
 Product limitations, assessment-quality suggestions, feature requests, and ordinary bugs without a security or privacy impact should be reported through the normal GitHub issue tracker.
+
+The beta has browser-bound anonymous identity and no account recovery or backup. These limitations are disclosed in the product and are not, by themselves, vulnerabilities. Do not include a real JWT or study material in a public reproduction.
 
 ## Disclosure
 

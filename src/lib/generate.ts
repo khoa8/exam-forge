@@ -1,6 +1,6 @@
-import type { Concept, McqOption, Question } from "./types";
-import { contentWords, lightStem, normText, promptContainsAcceptedShortAnswer, randomId, seededRandom, wordSimilarity } from "./util";
-import { looksLikeInstruction } from "./provider/sanitize";
+import type { Concept, McqOption, Question } from "./types.ts";
+import { contentWords, lightStem, normText, promptContainsAcceptedShortAnswer, randomId, seededRandom, wordSimilarity } from "./util.ts";
+import { looksLikeInstruction } from "./provider/sanitize.ts";
 
 /**
  * Deterministic, key-free question generation from source text and extracted concepts.

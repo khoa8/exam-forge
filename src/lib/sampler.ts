@@ -1,6 +1,6 @@
-import type { Concept, Question } from "./types";
-import { seededRandom } from "./util";
-import { isShortAnswerEquivalentToConcept } from "./grade";
+import type { Concept, Question } from "./types.ts";
+import { seededRandom } from "./util.ts";
+import { isShortAnswerEquivalentToConcept } from "./grade.ts";
 
 /**
  * Balanced question sampling for sessions.

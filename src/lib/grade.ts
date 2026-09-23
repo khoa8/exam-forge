@@ -1,5 +1,5 @@
-import type { AnswerValue, GradeResult, Question } from "./types";
-import { answerSummary, normAnswer, lightStem, similarityRatio } from "./util";
+import type { AnswerValue, GradeResult, Question } from "./types.ts";
+import { answerSummary, normAnswer, lightStem, similarityRatio } from "./util.ts";
 
 /**
  * Deterministic grading engine. The same answer always receives the same result.

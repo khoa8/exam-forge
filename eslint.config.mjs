@@ -21,6 +21,7 @@ const eslintConfig = [
       "node_modules/**",
       ".next/**",
       "out/**",
+      "dist-hosted/**",
       "tests/**",
       "playwright.config.ts",
       "playwright.prod-smoke.config.ts",

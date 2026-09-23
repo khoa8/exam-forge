@@ -1,5 +1,7 @@
 "use client";
 
+import { apiFetch } from "@/lib/api-client";
+
 import { useCallback, useEffect, useState } from "react";
 import { SessionRunner } from "@/components/SessionRunner";
 import type { SessionView } from "@/lib/service";
@@ -23,7 +25,7 @@ export function RunnerGate({ courseId, kind, sessionId, intro }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (id: string) => {
-    const res = await fetch(`/api/sessions/${id}`);
+    const res = await apiFetch(`/api/sessions/${id}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Failed to load session");
     setView(data as SessionView);
@@ -38,7 +40,7 @@ export function RunnerGate({ courseId, kind, sessionId, intro }: Props) {
       setStarting(true);
       setError(null);
       try {
-        const res = await fetch(`/api/courses/${courseId}/sessions`, {
+        const res = await apiFetch(`/api/courses/${courseId}/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind, conceptId }),

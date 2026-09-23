@@ -17,9 +17,13 @@
     "test:e2e": "playwright test",
     "test:smoke:prod": "npm run build && playwright test --config playwright.prod-smoke.config.ts",
     "db:reset": "node scripts/reset-db.mjs",
-    "screenshots": "node scripts/capture-screenshots.mjs"
+    "screenshots": "node scripts/capture-screenshots.mjs",
+    "build:hosted": "vite build --config vite.hosted.config.ts",
+    "dev:hosted": "vite --config vite.hosted.config.ts",
+    "deploy:hosted": "npm run build:hosted && wrangler deploy"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.1",
     "next": "^15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -30,14 +34,18 @@
     "@eslint/eslintrc": "^3.3.7",
     "@playwright/test": "^1.52.0",
     "@tailwindcss/postcss": "^4.1.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^15.3.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.6.0",
-    "vitest": "^4.1.11"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.137.0"
   },
   "overrides": {
     "next": {

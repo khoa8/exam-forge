@@ -1,10 +1,10 @@
-import type { Concept, Question } from "./types";
-import { contentWords, lightStem, normAnswer, normText, promptContainsAcceptedShortAnswer, wordSimilarity } from "./util";
-import { isSourceSpan, quoteIsGrounded } from "./extract";
-import { looksLikeInstruction } from "./provider/sanitize";
-import { swapSubject } from "./generate";
-import { validateQuestion as parseQuestionSchema } from "./schemas";
-import { diagnosticEligibleQuestions } from "./sampler";
+import type { Concept, Question } from "./types.ts";
+import { contentWords, lightStem, normAnswer, normText, promptContainsAcceptedShortAnswer, wordSimilarity } from "./util.ts";
+import { isSourceSpan, quoteIsGrounded } from "./extract.ts";
+import { looksLikeInstruction } from "./provider/sanitize.ts";
+import { swapSubject } from "./generate.ts";
+import { validateQuestion as parseQuestionSchema } from "./schemas.ts";
+import { diagnosticEligibleQuestions } from "./sampler.ts";
 
 /**
  * Deterministic validation gates applied to every generated question before it is

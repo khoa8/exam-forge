@@ -1,10 +1,10 @@
-import type { Concept, ExtractionQuality, Question } from "../types";
-import type { ValidationIssue } from "../validate";
-import { extractConcepts } from "../extract";
-import { generateQuestions } from "../generate";
-import { validateQuestionSet, validateConceptProvenance } from "../validate";
-import { validateConcept } from "../schemas";
-import { injectionNotice, scanForInjection } from "./sanitize";
+import type { Concept, ExtractionQuality, Question } from "../types.ts";
+import type { ValidationIssue } from "../validate.ts";
+import { extractConcepts } from "../extract.ts";
+import { generateQuestions } from "../generate.ts";
+import { validateQuestionSet, validateConceptProvenance } from "../validate.ts";
+import { validateConcept } from "../schemas.ts";
+import { injectionNotice, scanForInjection } from "./sanitize.ts";
 
 /**
  * The only material-generation path in ExamForge: deterministic and local.

@@ -1,4 +1,4 @@
-import type { AnswerValue, Question } from "./types";
+import type { AnswerValue, Question } from "./types.ts";
 
 /** Small seeded RNG (mulberry32) so "random" behavior is reproducible per course. */
 export function seededRandom(seedText: string): () => number {
