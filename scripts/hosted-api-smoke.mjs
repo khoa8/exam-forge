@@ -120,6 +120,9 @@ try {
   assert.equal(overview.data.activeMockSession.id, mockId, "active mock resume target");
   assert.equal(overview.data.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0),
     diagnostic.data.questions.length - overlapIds.length, "active mock excludes historical protected attempts");
+  const practiceDuringMock = await api(`/api/courses/${courseId}/sessions`, a, "POST", { kind: "practice" });
+  assert.equal(practiceDuringMock.status, 201, "automatic practice targeting works with an active mock snapshot");
+  assert.equal(practiceDuringMock.data.session.kind, "practice");
   assert.equal(mock.data.review, null);
   assert.equal(mock.data.summary, null);
   assert.deepEqual(mock.data.revealed, {});
