@@ -9,6 +9,7 @@ import { sampleDiagnostic, sampleMock, samplePractice } from "./sampler.ts";
 import { validateCourseViability } from "./validate.ts";
 import { randomId } from "./util.ts";
 import { clientQuestion, summarize } from "./presentation.ts";
+import { hostedAnswerValueSchema } from "./schemas.ts";
 
 export class HostedNotFoundError extends Error {
   constructor(what: string) { super(`${what} not found`); this.name = "NotFoundError"; }
@@ -18,6 +19,9 @@ export class HostedConflictError extends Error {
 }
 export class HostedMaterialNotViableError extends Error {
   constructor(message: string) { super(message); this.name = "MaterialNotViableError"; }
+}
+export class HostedInvalidAnswerError extends Error {
+  constructor() { super("Answer must match this question and stay within the beta length limit."); this.name = "InvalidAnswerError"; }
 }
 
 /** The hosted service uses the same generation, validation, grading and
@@ -200,6 +204,8 @@ export class HostedService {
   }
 
   async getSessionView(sessionId: string): Promise<SessionView> {
+      if ((error as Error).message === "SESSION_LIMIT_REACHED") throw new HostedConflictError(
+        "This beta allows 100 study sessions per course. Delete this course to make room for a new study cycle.");
     const session = await this.db.getSession(sessionId);
     if (!session) throw new HostedNotFoundError("Session");
     const allQuestions = await this.questions(session.courseId);
@@ -268,6 +274,12 @@ export class HostedService {
         createdAt: new Date().toISOString(),
       });
       if (!inserted) {
+    if (!hostedAnswerValueSchema.safeParse(answer).success ||
+      (question.type === "mcq" && (answer.type !== "option" || !question.options.some((o) => o.id === answer.optionId))) ||
+      (question.type === "truefalse" && answer.type !== "boolean") ||
+      ((question.type === "short" || question.type === "explanation") && answer.type !== "text")) {
+      throw new HostedInvalidAnswerError();
+    }
         const first = await this.db.getAttempt(sessionId, questionId);
         if (!first) throw new Error("First attempt was not found after a duplicate answer.");
         return {

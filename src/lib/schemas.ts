@@ -79,6 +79,13 @@ export const answerValueSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
 ]);
 
+/** Hosted answers have a durable storage budget; local SQLite keeps its existing contract. */
+export const hostedAnswerValueSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("option"), optionId: z.string().min(1).max(64) }).strict(),
+  z.object({ type: z.literal("boolean"), value: z.boolean() }).strict(),
+  z.object({ type: z.literal("text"), text: z.string().max(2000) }).strict(),
+]);
+
 export function validateConcept(raw: unknown):
   { ok: true; concept: import("./types").Concept } | { ok: false; errors: string[] } {
   const parsed = conceptSchema.safeParse(raw);
@@ -114,4 +121,8 @@ export const startSessionBodySchema = z.object({
 export const submitAnswerBodySchema = z.object({
   questionId: z.string().min(1),
   answer: answerValueSchema,
+});
+
+export const hostedSubmitAnswerBodySchema = submitAnswerBodySchema.extend({
+  answer: hostedAnswerValueSchema,
 });

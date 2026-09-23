@@ -1,6 +1,6 @@
 "use client";
 
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, isHosted } from "@/lib/api-client";
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -483,6 +483,7 @@ function AnswerInput({
       <input
         type="text"
         disabled={disabled}
+        maxLength={isHosted() ? 2000 : undefined}
         value={value?.type === "text" ? value.text : ""}
         onChange={(e) => onChange({ type: "text", text: e.target.value })}
         placeholder="Type the term…"
@@ -494,6 +495,7 @@ function AnswerInput({
   return (
     <textarea
       disabled={disabled}
+      maxLength={isHosted() ? 2000 : undefined}
       rows={5}
       value={value?.type === "text" ? value.text : ""}
       onChange={(e) => onChange({ type: "text", text: e.target.value })}

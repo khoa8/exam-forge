@@ -5,9 +5,10 @@ import {
   HostedConflictError,
   HostedMaterialNotViableError,
   HostedNotFoundError,
+  HostedInvalidAnswerError,
 } from "../../../src/lib/hosted-service.ts";
 import { ingestText } from "../../../src/lib/ingest.ts";
-import { createCourseBodySchema, startSessionBodySchema, submitAnswerBodySchema } from "../../../src/lib/schemas.ts";
+import { createCourseBodySchema, startSessionBodySchema, hostedSubmitAnswerBodySchema } from "../../../src/lib/schemas.ts";
 import { SAMPLE_MATERIAL, SAMPLE_MATERIAL_TITLE } from "../../../src/sample/material.ts";
 
 const url = Deno.env.get("SUPABASE_URL");
@@ -130,7 +131,7 @@ Deno.serve(async (request) => {
     }
     const answerMatch = path.match(/^\/api\/sessions\/([^/]+)\/answer$/);
     if (answerMatch && request.method === "POST") {
-      const parsed = submitAnswerBodySchema.safeParse(await parseJson(request));
+      const parsed = hostedSubmitAnswerBodySchema.safeParse(await parseJson(request));
       if (!parsed.success) return json({ error: "Invalid answer request." }, 400, origin);
       return json(await service.answerQuestion(decodeURIComponent(answerMatch[1]), parsed.data.questionId, parsed.data.answer), 200, origin);
     }
@@ -143,6 +144,7 @@ Deno.serve(async (request) => {
     if ((error as Error).message === "REQUEST_TOO_LARGE") return json({ error: "Request is too large." }, 413, origin);
     if ((error as Error).message === "INVALID_JSON") return json({ error: "Request body must be valid JSON." }, 400, origin);
     if (error instanceof HostedNotFoundError) return json({ error: error.message }, 404, origin);
+    if (error instanceof HostedInvalidAnswerError) return json({ error: error.message }, 400, origin);
     if (error instanceof HostedConflictError) return json({ error: error.message }, 409, origin);
     if (error instanceof HostedMaterialNotViableError) return json({ error: error.message }, 422, origin);
     if (/at most 10 courses per browser identity/i.test((error as Error).message)) {

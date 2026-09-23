@@ -160,6 +160,7 @@ export class HostedDb {
     const { data, error } = await this.client.from("ef_sessions").select("*").eq("id", id).maybeSingle();
     required(true, error);
     if (!data || !(await this.ownsCourse(data.course_id))) return null;
+    if (error?.message.includes("SESSION_LIMIT_REACHED")) throw new Error("SESSION_LIMIT_REACHED");
     return mapSession(data as Record<string, unknown>);
   }
 
