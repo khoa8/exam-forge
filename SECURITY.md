@@ -27,7 +27,7 @@ Do not include real study material, learner data, credentials, API keys, tokens,
 
 ## Security Scope
 
-The public beta serves static assets on Cloudflare and uses Supabase anonymous Auth, an Edge Function, and learner-owned Postgres data. The Edge Function verifies each learner JWT, checks ownership for every course/session ID, and keeps privileged database credentials and answer-bearing question rows server-side. Its responses are non-cacheable. Turnstile protects anonymous signup. A separate optional local mode binds to `127.0.0.1` and stores data in SQLite.
+The public beta serves static assets on Cloudflare and uses Supabase anonymous Auth, an Edge Function, and learner-owned Postgres data. The Edge Function verifies each learner JWT, checks ownership for every course/session ID, and keeps privileged database credentials and answer-bearing question rows server-side. Learner JWTs have no direct ExamForge table or RPC grants; course material and progress are available only through the owner-scoped Edge Function. Its responses are non-cacheable. Turnstile protects anonymous signup. A separate optional local mode binds to `127.0.0.1` and stores data in SQLite.
 
 Security reports are especially relevant when they involve areas such as:
 

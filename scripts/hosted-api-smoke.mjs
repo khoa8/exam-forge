@@ -70,6 +70,19 @@ try {
   })).status, 404);
   assert.equal((await api(`/api/sessions/${diagnosticId}/finish`, b, "POST")).status, 404);
 
+  const firstId = diagnostic.data.questions[0].id;
+  for (const answer of [
+    { type: "text", text: "x".repeat(2001) },
+    { type: "option", optionId: "x".repeat(65) },
+    { type: "option", optionId: "not-an-option" },
+  ]) {
+    assert.equal((await api(`/api/sessions/${diagnosticId}/answer`, a, "POST", {
+      questionId: firstId, answer,
+    })).status, 400, "hosted API rejects oversized or mismatched answers");
+  }
+  assert.equal((await api(`/api/sessions/${diagnosticId}`, a)).data.answeredCount, 0,
+    "rejected answers do not create partial attempts");
+
   for (const question of diagnostic.data.questions) {
     const saved = await api(`/api/sessions/${diagnosticId}/answer`, a, "POST", {
       questionId: question.id, answer: answerFor(question),
@@ -84,12 +97,29 @@ try {
   const practice = await api(`/api/courses/${courseId}/sessions`, a, "POST", { kind: "practice" });
   assert.equal(practice.status, 201);
   assert.ok(practice.data.questions.length > 0);
-  const mock = await api(`/api/courses/${courseId}/sessions`, a, "POST", { kind: "mock" });
+  const [mock, concurrentOverview, concurrentDiagnostic] = await Promise.all([
+    api(`/api/courses/${courseId}/sessions`, a, "POST", { kind: "mock" }),
+    api(`/api/courses/${courseId}`, a),
+    api(`/api/sessions/${diagnosticId}`, a),
+  ]);
   assert.equal(mock.status, 201);
   const mockId = mock.data.session.id;
+  const overlapIds = diagnostic.data.questions.filter((q) => mock.data.session.questionIds.includes(q.id)).map((q) => q.id);
+  const concurrentAttemptCount = concurrentOverview.data.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0);
+  assert.equal(concurrentAttemptCount,
+    diagnostic.data.questions.length - (concurrentOverview.data.activeMockSession?.id === mockId ? overlapIds.length : 0),
+    "concurrent overview uses one mock-protection snapshot");
+  if (concurrentDiagnostic.data.withheldQuestionIds.length > 0) {
+    assert.equal(concurrentDiagnostic.data.summary, null, "concurrent feedback withholds aggregate correctness");
+    for (const id of concurrentDiagnostic.data.withheldQuestionIds) {
+      assert.ok(!concurrentDiagnostic.data.revealed[id], "concurrent feedback hides protected grade");
+    }
+  }
   assert.equal((await api(`/api/courses/${courseId}/sessions`, a, "POST", { kind: "mock" })).status, 409);
   const overview = await api(`/api/courses/${courseId}`, a);
   assert.equal(overview.data.activeMockSession.id, mockId, "active mock resume target");
+  assert.equal(overview.data.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0),
+    diagnostic.data.questions.length - overlapIds.length, "active mock excludes historical protected attempts");
   assert.equal(mock.data.review, null);
   assert.equal(mock.data.summary, null);
   assert.deepEqual(mock.data.revealed, {});
@@ -120,6 +150,9 @@ try {
   const readiness = await api(`/api/courses/${courseId}`, a);
   assert.equal(readiness.status, 200);
   assert.ok(readiness.data.readiness);
+  assert.equal(readiness.data.concepts.reduce((sum, c) => sum + c.mastery.attempts, 0),
+    diagnostic.data.questions.length + mock.data.questions.length,
+    "submitting the mock restores historical attempts and adds its answers");
   console.log("Hosted API smoke passed: health, ownership/IDOR, diagnostic, practice, mock isolation and readiness.");
 } finally {
   const deleted = await api(`/api/courses/${courseId}`, a, "DELETE");

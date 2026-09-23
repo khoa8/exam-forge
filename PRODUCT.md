@@ -126,9 +126,12 @@ Study material and progress are stored in ExamForge's hosted database for that i
 Deleting a course removes its material, concepts, questions, sessions, and attempts.
 
 The beta accepts up to 10 courses per browser identity and five course-generation
-attempts per hour. Pasted or extracted text is limited to 200,000 characters; text-based
+attempts per hour. Each course can hold 100 study sessions; reaching that limit blocks
+new sessions without deleting existing progress. Written answers are limited to 2,000
+characters. Pasted or extracted text is limited to 200,000 characters; text-based
 PDF uploads are limited to 20 MB. Material that cannot produce grounded assessment
-content fails honestly. These bounds keep the free public service usable.
+content fails honestly. These bounds limit stored state per browser identity; total
+availability still depends on shared free-tier capacity.
 
 ## Privacy
 

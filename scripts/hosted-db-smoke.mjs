@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 
 const url = process.env.EXAMFORGE_SUPABASE_URL;
 const publicKey = process.env.EXAMFORGE_SUPABASE_PUBLISHABLE_KEY;
@@ -53,11 +53,13 @@ const course = {
   created_at: new Date().toISOString(),
 };
 const concepts = [{ id: conceptId, name: "Synthetic concept", description: "A test concept", evidence_json: ["Synthetic concept"], importance: 0.5, ord: 0 }];
+const questionPayloads = [
+  { type: "mcq", correctOptionId: "a", options: [{ id: "a", text: "Synthetic answer A" }, { id: "b", text: "Synthetic answer B" }] },
+  { type: "short", modelAnswer: "synthetic term", acceptedAnswers: ["synthetic term"] },
+  { type: "explanation", modelAnswer: "A synthetic explanation for this probe.", keyTerms: ["synthetic", "probe"] },
+];
 const questions = questionIds.map((questionId, ord) => ({
-  id: questionId,
-  concept_id: conceptId,
-  payload_json: { id: questionId, type: "mcq", correctOptionId: "a" },
-  ord,
+  id: questionId, concept_id: conceptId, payload_json: { id: questionId, ...questionPayloads[ord] }, ord,
 }));
 
 try {
@@ -68,12 +70,12 @@ try {
   assert.equal(created.data, courseId);
 
   const direct = (table, token) => request(`/rest/v1/${table}?select=*`, publicKey, { token });
-  assert.equal((await direct("ef_courses", a.token)).data.length, 1, "owner can read their course");
-  assert.equal((await direct("ef_courses", b.token)).data.length, 0, "another learner cannot read it");
+  assert.ok((await direct("ef_courses", a.token)).status >= 400, "learner direct material reads are disabled");
+  assert.ok((await direct("ef_courses", b.token)).status >= 400, "other learner direct reads are disabled");
   const unauthenticated = await direct("ef_courses", undefined);
   assert.ok(unauthenticated.status >= 400 || unauthenticated.data.length === 0,
     "unauthenticated requests cannot read it");
-  assert.equal((await direct("ef_concepts", b.token)).data.length, 0, "concepts are owner-scoped");
+  assert.ok((await direct("ef_concepts", a.token)).status >= 400, "learner direct concept reads are disabled");
   assert.ok((await direct("ef_questions", a.token)).status >= 400, "answer keys have no learner grant");
   assert.ok((await direct("ef_attempts", a.token)).status >= 400, "scores have no learner grant");
   const unauthorisedWrite = await request("/rest/v1/ef_courses", publicKey, { method: "POST", token: b.token, body: course });
@@ -100,6 +102,21 @@ try {
   assert.deepEqual(starts.map((x) => x.status).sort(), [200, 409], "only one concurrent mock start succeeds");
   const sessionId = candidateIds[starts.findIndex((x) => x.status === 200)];
 
+  const invalidAnswers = [
+    { type: "text", text: randomBytes(5000).toString("base64url") },
+    { type: "option", optionId: "x".repeat(65) },
+    { type: "option", optionId: "not-an-option" },
+  ];
+  for (const invalid of invalidAnswers) {
+    const rejected = await request("/rest/v1/rpc/ef_submit_attempt", secretKey, {
+      method: "POST", body: { p_session_id: sessionId, p_question_id: questionIds[0],
+        p_answer_json: invalid, p_score: 0, p_correct: false },
+    });
+    assert.ok(rejected.status >= 400, "RPC rejects invalid answer before persistence");
+  }
+  const noPartialAttempt = await request(`/rest/v1/ef_attempts?session_id=eq.${sessionId}&select=id`, secretKey);
+  assert.equal(noPartialAttempt.data.length, 0, "invalid answers create no attempt");
+
   const answer = () => request("/rest/v1/rpc/ef_submit_attempt", secretKey, {
     method: "POST", body: { p_session_id: sessionId, p_question_id: questionIds[0],
       p_answer_json: { type: "option", optionId: "b" }, p_score: 0, p_correct: false },
@@ -109,6 +126,12 @@ try {
   const attempts = await request(`/rest/v1/ef_attempts?session_id=eq.${sessionId}&select=question_id,score`, secretKey);
   assert.equal(attempts.data.length, 1);
   assert.equal(attempts.data[0].score, 0);
+
+  const oversizedDirect = await request("/rest/v1/ef_attempts", secretKey, { method: "POST", body: {
+    session_id: sessionId, course_id: courseId, question_id: questionIds[1], concept_id: conceptId,
+    answer_json: { type: "text", text: randomBytes(8000).toString("base64url") }, score: 0, correct: false,
+  } });
+  assert.ok(oversizedDirect.status >= 400, "table size constraint rejects direct oversized answer");
 
   const finished = await request("/rest/v1/rpc/ef_finish_session", secretKey, {
     method: "POST", body: { p_session_id: sessionId },
@@ -121,6 +144,14 @@ try {
       p_kind: "diagnostic", p_concept_id: null, p_question_ids: questionIds },
   });
   assert.equal(diagnostic.status, 200);
+  for (const questionId of questionIds.slice(1)) {
+    const written = await request("/rest/v1/rpc/ef_submit_attempt", secretKey, { method: "POST", body: {
+      p_session_id: diagnosticId, p_question_id: questionId,
+      p_answer_json: { type: "text", text: "A synthetic explanation of the probe term." },
+      p_score: 0.5, p_correct: false,
+    } });
+    assert.equal(written.status, 200, "legitimate short and explanation answers persist");
+  }
   const race = await Promise.all([
     start(`ses_${randomUUID()}`),
     request("/rest/v1/rpc/ef_submit_attempt", secretKey, {
@@ -135,6 +166,19 @@ try {
       p_answer_json: { type: "option", optionId: "a" }, p_score: 1, p_correct: true },
   });
   assert.ok(afterStart.status >= 400, "active mock protects overlapping diagnostic questions");
+  const filler = Array.from({ length: 97 }, () => ({
+    id: `ses_${randomUUID()}`, course_id: courseId, kind: "practice", concept_id: conceptId,
+    question_ids: questionIds,
+  }));
+  const filled = await request("/rest/v1/ef_sessions", secretKey, { method: "POST", body: filler });
+  assert.equal(filled.status, 201, "synthetic sessions reach the documented course limit");
+  const quota = await request("/rest/v1/rpc/ef_start_session", secretKey, { method: "POST", body: {
+    p_owner_id: a.id, p_id: `ses_${randomUUID()}`, p_course_id: courseId, p_kind: "practice",
+    p_concept_id: conceptId, p_question_ids: questionIds,
+  } });
+  assert.ok(quota.status >= 400, "RPC refuses the 101st session");
+  const sessionCount = await request(`/rest/v1/ef_sessions?course_id=eq.${courseId}&select=id`, secretKey);
+  assert.equal(sessionCount.data.length, 100, "quota rejection adds no partial session");
   console.log("Hosted DB smoke passed: owner isolation, protected keys, atomicity, concurrency and lifecycle.");
 } finally {
   await request(`/rest/v1/ef_courses?id=eq.${courseId}`, secretKey, { method: "DELETE" });

@@ -22,8 +22,11 @@ no email, password, backup, or account recovery. Clearing site data or using a
 different browser/device can make old courses inaccessible. Deleting a course removes
 its material and derived progress.
 
-The beta allows 10 courses per browser identity and five generation attempts per
-hour. Material is capped at 200,000 characters; text-based PDFs are capped at 20 MB.
+The beta allows 10 courses per browser identity, five generation attempts per
+hour, and 100 study sessions per course. At the session limit, existing progress
+remains available; delete a course to start a new study cycle. Written answers
+are limited to 2,000 characters. Material is capped at 200,000 characters;
+text-based PDFs are capped at 20 MB.
 Scanned PDFs need OCR and are not supported. PDF text extraction happens in your
 browser; the original PDF is not stored by ExamForge. Extraction from complex layouts
 can be incomplete, and insufficient material fails without invented questions.

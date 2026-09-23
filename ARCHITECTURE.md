@@ -104,6 +104,13 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    `startSession` rejects it with a `409` conflict while Diagnostic/Practice coexistence
    stays allowed. Hosted Postgres also enforces this with a partial unique index and
    serializes mock starts with submissions using a course advisory lock.
+   Hosted overview, practice targeting, and completed-session views derive
+   session status, protected question IDs, and dependent attempts from one
+   `ef_course_state` SQL statement. Postgres gives that statement one MVCC
+   snapshot; a response can linearize before or after a concurrent mock
+   transition, but cannot mix its protection and attempt states. Course
+   concepts and questions are immutable after creation, so they can be read
+   separately. Grading and readiness remain in TypeScript.
 4. **Generated content crosses one shared trust boundary** — every candidate goes
    through `validateQuestionSet`, which first parses it against the canonical zod
    schemas (runtime validation, not TypeScript casts) and then applies the semantic
@@ -162,9 +169,9 @@ Every public ID path in `HostedDb` checks course ownership before privileged rea
 writes. The Supabase secret key exists only in the Edge Function secret store and is
 used to call PostgREST as the service role. It is absent from browser bundles and Git.
 
-RLS is enabled on all hosted tables. Authenticated learners have only owner-scoped
-read grants/policies on courses and concepts. They have no direct question, session,
-attempt, or server RPC grants; the answer-bearing question payload is server-only.
+RLS is enabled on all hosted tables. Authenticated learners have no direct table
+or server RPC grants; even course material and concepts are read through the
+owner-scoped Edge Function. The answer-bearing question payload is server-only.
 The service role bypasses RLS, so its API boundary performs explicit owner checks.
 Untrusted request bodies are validated before service calls, and question candidates
 pass the same deterministic validation as the local mode.
@@ -177,6 +184,20 @@ two active mocks. `ef_submit_attempt` locks the session and uses a unique attemp
 for first-answer semantics; `ef_finish_session` locks the session for safe completion.
 Foreign keys cascade course deletion through all derived state. Session ordering uses
 creation timestamp plus a generated sequence as a deterministic tie-breaker.
+
+The hosted persisted-state budget is enforced at the API and database boundaries.
+`ef_start_session` serializes a 100-session limit per course and accepts at most
+eight question IDs per session. Thus normal hosted APIs can persist at most 800
+attempts per course; the unique attempt key can only reduce that count. Answer
+requests must match the question type and, for MCQ, an actual option ID. The
+hosted request schema limits written answers to 2,000 characters and option IDs
+to 64 characters; `ef_submit_attempt` independently validates shape, type,
+length and option membership. A table constraint limits serialized answer JSON
+to 8,192 bytes even for privileged direct writes. A rejected answer/session
+creates no partial row, and reaching the session limit returns an explicit
+conflict without deleting study history. The ten-course owner limit also bounds
+this progress state per anonymous identity, apart from already bounded course
+material and its generated questions.
 
 Anonymous signup requires Cloudflare Turnstile and Supabase's per-IP signup limit.
 Request bodies are capped at 500 KB; material is capped at 200,000 characters, PDFs
