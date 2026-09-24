@@ -103,7 +103,12 @@ getCourseOverview() ── mastery.ts + readiness.ts → readiness %, weak/stron
    deterministic question set and withhold the first mock's post-submit review, so
    `startSession` rejects it with a `409` conflict while Diagnostic/Practice coexistence
    stays allowed. Hosted Postgres also enforces this with a partial unique index and
-   serializes mock starts with submissions using a course advisory lock.
+   serializes mock starts, submissions, and completion using a course advisory
+   lock. Session mutations take that lock before any session row lock; answer
+   and finish RPCs first read `course_id` without locking, then re-read and
+   validate the session after acquiring the course and row locks. Under
+   `READ COMMITTED`, the practice RPC's active-mock recheck observes a mock
+   start or completion that committed while it waited for the course lock.
    Hosted overview, practice targeting, and completed-session views derive
    session status, protected question IDs, and dependent attempts from one
    `ef_course_state` SQL statement. Postgres gives that statement one MVCC
@@ -184,9 +189,10 @@ pass the same deterministic validation as the local mode.
 `ef_create_course` inserts the course, concepts, and questions in one transaction and
 serializes the ten-course quota per owner. A separate per-owner row lock limits course
 generation attempts to five per hour, including failed material. `ef_start_session`
-serializes course mock starts with `ef_submit_attempt`; a partial unique index prevents
-two active mocks. `ef_submit_attempt` locks the session and uses a unique attempt key
-for first-answer semantics; `ef_finish_session` locks the session for safe completion.
+serializes course mock starts with `ef_submit_attempt` and `ef_finish_session`;
+a partial unique index prevents two active mocks. Both answer and finish RPCs
+take the course advisory lock before the session row lock. A unique attempt key
+preserves first-answer semantics; the row lock prevents answers after completion.
 Foreign keys cascade course deletion through all derived state. Session ordering uses
 creation timestamp plus a generated sequence as a deterministic tie-breaker.
 

@@ -55,6 +55,10 @@ Cloudflare Worker. The SQL migrations in `supabase/migrations/` must be applied 
 order to a clean project. See [ARCHITECTURE.md](ARCHITECTURE.md) for the ownership,
 answer-key, and transaction boundaries.
 
+The hosted build copies `public/_headers` to `dist-hosted/_headers`. Cloudflare
+Workers Static Assets applies its anti-framing headers to the SPA shell and
+fallback routes. Keep this file in the deployed asset directory.
+
 Configuration names (supply your own values, never commit them):
 
 | Location | Name | Purpose |
@@ -99,6 +103,7 @@ npm run dev              # local Next.js server
 npm run build            # local production build
 npm start                # local production server
 npm run build:hosted     # hosted static assets
+npm run test:hosted:concurrency # disposable local Postgres lock regression (Docker)
 npm run deploy:hosted    # hosted build and Cloudflare deployment
 npm test                 # unit and integration tests
 npm run test:e2e         # local Playwright journey, disposable SQLite DB
