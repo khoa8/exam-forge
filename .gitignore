@@ -7,10 +7,10 @@ dist-hosted/
 # local data (user study material + progress — never commit)
 .data/
 
-# env
+# environment / local secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # testing
 test-results/
