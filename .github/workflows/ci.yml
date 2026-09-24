@@ -44,6 +44,10 @@ jobs:
         run: npm test
 
       - name: Hosted static build
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: synthetic-public-test-key
+          VITE_TURNSTILE_SITE_KEY: synthetic-site-key
         run: |
           npm run build:hosted
           test -f dist-hosted/_headers
