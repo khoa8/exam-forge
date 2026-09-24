@@ -15,7 +15,7 @@ heuristic, not a prediction of a real exam score.
 
 ## Hosted beta
 
-Try the [ExamForge beta](https://examforge-beta.kay8nand.workers.dev). First use
+Try the [ExamForge beta](https://examforge-beta.ka-labs.workers.dev). First use
 creates an anonymous identity for that browser after a verification check. Study
 material and progress are stored in the hosted ExamForge database. The identity has
 no email, password, backup, or account recovery. Clearing site data or using a
