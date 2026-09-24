@@ -99,6 +99,7 @@ npm run dev              # local Next.js server
 npm run build            # local production build
 npm start                # local production server
 npm run build:hosted     # hosted static assets
+npm run test:hosted:concurrency # disposable local Postgres lock regression (Docker)
 npm run deploy:hosted    # hosted build and Cloudflare deployment
 npm test                 # unit and integration tests
 npm run test:e2e         # local Playwright journey, disposable SQLite DB

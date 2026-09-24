@@ -19,6 +19,7 @@
     "db:reset": "node scripts/reset-db.mjs",
     "screenshots": "node scripts/capture-screenshots.mjs",
     "build:hosted": "vite build --config vite.hosted.config.ts",
+    "test:hosted:concurrency": "node scripts/hosted-db-concurrency.mjs",
     "dev:hosted": "vite --config vite.hosted.config.ts",
     "deploy:hosted": "npm run build:hosted && wrangler deploy"
   },
