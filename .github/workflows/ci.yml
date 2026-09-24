@@ -43,6 +43,16 @@ jobs:
       - name: Unit and integration tests
         run: npm test
 
+      - name: Hosted static build
+        run: |
+          npm run build:hosted
+          test -f dist-hosted/_headers
+          grep -F "Content-Security-Policy: frame-ancestors 'none'" dist-hosted/_headers
+          grep -F "X-Frame-Options: DENY" dist-hosted/_headers
+
+      - name: Hosted database concurrency regression
+        run: npm run test:hosted:concurrency
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
