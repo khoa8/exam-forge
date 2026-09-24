@@ -55,6 +55,10 @@ Cloudflare Worker. The SQL migrations in `supabase/migrations/` must be applied 
 order to a clean project. See [ARCHITECTURE.md](ARCHITECTURE.md) for the ownership,
 answer-key, and transaction boundaries.
 
+The hosted build copies `public/_headers` to `dist-hosted/_headers`. Cloudflare
+Workers Static Assets applies its anti-framing headers to the SPA shell and
+fallback routes. Keep this file in the deployed asset directory.
+
 Configuration names (supply your own values, never commit them):
 
 | Location | Name | Purpose |
