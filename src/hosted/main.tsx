@@ -8,13 +8,10 @@ import PracticePage from "../app/course/[id]/practice/page";
 import MockExamPage from "../app/course/[id]/mock/page";
 import ReadinessPage from "../app/course/[id]/readiness/page";
 import { getHostedClient } from "../lib/api-client";
+import { hostedConfigFromEnv, invalidHostedConfigNames } from "../lib/hosted-config";
 import "../app/globals.css";
 
-window.__EXAMFORGE_HOSTED__ = {
-  supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? "",
-  publishableKey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",
-  turnstileSiteKey: import.meta.env.VITE_TURNSTILE_SITE_KEY ?? "",
-};
+window.__EXAMFORGE_HOSTED__ = hostedConfigFromEnv(import.meta.env);
 
 interface TurnstileApi {
   render: (element: HTMLElement, options: {
@@ -113,6 +110,14 @@ function RoutedPage() {
 }
 
 function App() {
+  if (invalidHostedConfigNames(window.__EXAMFORGE_HOSTED__).length) {
+    return <main className="min-h-screen max-w-lg mx-auto px-4 py-12">
+      <h1 className="text-xl font-semibold">ExamForge is unavailable</h1>
+      <p role="alert" className="mt-3 text-slate-700">
+        Hosted configuration is unavailable. Please try again later.
+      </p>
+    </main>;
+  }
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b bg-white">

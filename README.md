@@ -71,6 +71,11 @@ Configuration names (supply your own values, never commit them):
 | Edge Function secret | `EXAMFORGE_ALLOWED_ORIGINS` | Comma-separated exact hosted origins |
 | Supabase Auth config environment | `EXAMFORGE_TURNSTILE_SECRET` | Private Turnstile verification secret |
 
+Supply all three public `VITE_*` values through the shell or an untracked Vite
+environment file (such as `.env.production.local`) before `npm run build:hosted`
+or `npm run deploy:hosted`. The hosted build fails if any value is missing or
+unusable. These browser values are distinct from the server-only secrets.
+
 Supabase supplies `SUPABASE_URL` to the Edge Function. Enable anonymous Auth with
 Turnstile CAPTCHA and an appropriate signup rate limit; configure the Turnstile
 secret in Supabase Auth, and allow the dedicated Worker domain in the widget. For

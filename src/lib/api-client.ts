@@ -1,10 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-
-export interface HostedConfig {
-  supabaseUrl: string;
-  publishableKey: string;
-  turnstileSiteKey: string;
-}
+import type { HostedConfig } from "./hosted-config";
 
 declare global {
   interface Window {
