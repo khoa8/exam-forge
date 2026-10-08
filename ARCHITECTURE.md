@@ -4,7 +4,9 @@ ExamForge has two deployment entrypoints over shared deterministic learning modu
 
 - **Hosted beta:** Vite-built React assets on Cloudflare Workers Static Assets;
   Supabase Auth creates anonymous browser identities; one Supabase Edge Function runs
-  the assessment service over learner-owned Supabase Postgres data.
+  the assessment service over learner-owned Supabase Postgres data. A scheduled
+  handler on the same Cloudflare Worker calls a separate token-gated Supabase
+  maintenance function for a small database read three times daily.
 - **Local:** Next.js 15 App Router and `node:sqlite` on loopback. This remains useful
   for offline development and single-user use.
 
@@ -47,8 +49,10 @@ src/
 └── sample/material.ts  # Bundled original demo material
 
 supabase/functions/examforge/  # Single authenticated hosted API boundary
+supabase/functions/examforge-keepalive/ # Dedicated token-gated maintenance read
 supabase/migrations/           # Postgres schema, constraints and server-only RPCs
-wrangler.jsonc                 # Cloudflare static-asset deployment
+src/worker/keepalive.ts         # Cron handler + Static Assets fallback passthrough
+wrangler.jsonc                 # Cloudflare static assets + UTC Cron cadence
 ```
 
 ## Data flow (learning loop)
@@ -169,15 +173,41 @@ publishable key and Cloudflare Turnstile site key are browser configuration, nev
 authorization. First visits solve Turnstile, then Supabase Auth issues an anonymous
 JWT; the same browser reuses its session. The Edge Function verifies each bearer JWT
 with Supabase Auth before instantiating `HostedDb` for that user's ID. Personalized
-responses use `private, no-store`, and the Cloudflare deployment serves only static
-assets; no personalized content is cached there.
+responses use `private, no-store`. Browser requests use Cloudflare Static Assets
+with SPA fallback and `_headers`, without `run_worker_first`. Asset matches and
+navigations bypass the script; its `fetch()` fallback delegates other requests
+unchanged to `ASSETS.fetch` (including deep links without a navigation header).
+No personalized content is cached there. The preferred public origin is `https://exam.kohalabs.com`;
+the legacy Workers origin remains allowed. Their browser storage and anonymous
+identities are independent; changing hostname does not transfer learner history.
+
+The Cloudflare `scheduled()` handler calls only the dedicated
+`examforge-keepalive` function, with a high-entropy maintenance token held in both
+provider secret stores. It needs the project URL but no Supabase API/privileged
+key. This separate function has `verify_jwt = false` and checks the exact method,
+path, absence of browser Origin and mandatory token before creating a privileged
+client. The learner function retains `verify_jwt = true`, in-handler user JWT
+verification, exact CORS and owner-scoped access; learner sessions cannot authorize
+maintenance. Separation avoids depending on unverified API-key-only gateway
+compatibility for a maintenance branch in the learner API.
+
+Maintenance performs one uncached PostgREST `ef_courses` read selecting only `id`
+with limit one and a 10-second query deadline. An empty result is valid activity;
+errors or missing configuration fail closed. No learner data, counts or raw DB
+errors leave the function, and no rows/schema are changed. Its operational response
+is only `{ ok: true }` with `no-store`. The Worker awaits HTTP 200 and that exact
+JSON shape with a 15-second deadline; failure rejects the Cron event with a
+sanitized message. `wrangler.jsonc` owns the three daily UTC runs; there is no
+GitHub inactivity-dependent scheduler. `GET /api/health` remains a trivial,
+database-free check. Deployed Cron/DB activity requires operator verification and
+reduces Free-tier pause likelihood without guaranteeing availability.
 
 Postgres tables `ef_courses`, `ef_concepts`, `ef_questions`, `ef_sessions`, and
 `ef_attempts` hold hosted study state. Courses have an `owner_id` referencing
 `auth.users`; all child rows derive ownership through the course foreign key.
 Every public ID path in `HostedDb` checks course ownership before privileged reads or
-writes. The Supabase secret key exists only in the Edge Function secret store and is
-used to call PostgREST as the service role. It is absent from browser bundles and Git.
+writes. The Supabase secret key exists only in Supabase's Edge Function secret store
+and is used to call PostgREST as the service role. It is absent from browser bundles and Git.
 
 RLS is enabled on all hosted tables. Authenticated learners have no direct table
 or server RPC grants; even course material and concepts are read through the
@@ -290,6 +320,11 @@ no domain type or UI surface reads them.
   disposable authenticated identities, and an anonymous browser journey on the deployed Cloudflare
   URL. These verify the separate Auth, Postgres and Edge Function boundaries that local
   SQLite tests cannot prove.
+- **Hosted maintenance:** focused tests exercise the real Supabase SDK read against
+  synthetic PostgREST responses, maintenance authorization/failures, scheduled
+  response validation, and preserved learner health/JWT/CORS behavior. Local
+  Wrangler checks cover scheduled/static-asset integration; a live invocation and
+  observed Cron plus DB activity remain separate operator release checks.
 
 ## UI structure
 

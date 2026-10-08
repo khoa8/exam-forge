@@ -3,6 +3,7 @@ node_modules/
 .next/
 out/
 dist-hosted/
+.wrangler/
 
 # local data (user study material + progress — never commit)
 .data/
@@ -11,6 +12,8 @@ dist-hosted/
 .env
 .env.*
 !.env.example
+.dev.vars
+.dev.vars.*
 
 # testing
 test-results/
