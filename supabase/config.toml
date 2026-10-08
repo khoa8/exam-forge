@@ -155,7 +155,7 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "https://examforge-beta.ka-labs.workers.dev"
+site_url = "https://exam.kohalabs.com"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
@@ -383,6 +383,11 @@ deno_version = 2
 
 [functions.examforge]
 verify_jwt = true
+
+# Dedicated server-to-server handler verifies EXAMFORGE_KEEPALIVE_TOKEN itself.
+# Never disable JWT verification on the learner API to enable maintenance.
+[functions.examforge-keepalive]
+verify_jwt = false
 
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"

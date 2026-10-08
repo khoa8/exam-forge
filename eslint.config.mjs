@@ -22,6 +22,7 @@ const eslintConfig = [
       ".next/**",
       "out/**",
       "dist-hosted/**",
+      ".wrangler/**",
       "tests/**",
       "playwright.config.ts",
       "playwright.prod-smoke.config.ts",
